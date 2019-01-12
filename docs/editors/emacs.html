@@ -105,8 +105,8 @@ not exist yet.</p>
 <td><code>-r sonatype:releases</code></td>
 </tr>
 <tr>
-<td>0.3.3+115-70fedca0-SNAPSHOT</td>
-<td>11 Jan 2019 20:27</td>
+<td>0.3.3+117-86782c19-SNAPSHOT</td>
+<td>12 Jan 2019 16:28</td>
 <td><code>-r sonatype:snapshots</code></td>
 </tr>
 </tbody>
@@ -118,8 +118,7 @@ chmod +x coursier
   --java-opt -XX:+UseG1GC \
   --java-opt -XX:+UseStringDeduplication  \
   --java-opt -Xss4m \
-  --java-opt -Xms1G \
-  --java-opt -Xmx4G  \
+  --java-opt -Xms100m \
   --java-opt -Dmetals.client=emacs \
   org.scalameta:metals_2.12:0.3.3 \
   -r bintray:scalacenter/releases \
