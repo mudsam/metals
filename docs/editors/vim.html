@@ -60,11 +60,14 @@ Plug <span class="hljs-string">'natebosch/vim-lsc'</span>
 <span class="hljs-comment">" Configuration for vim-lsc</span>
 <span class="hljs-keyword">let</span> <span class="hljs-variable">g:lsc_enable_autocomplete</span> = <span class="hljs-variable">v:false</span>
 <span class="hljs-keyword">let</span> <span class="hljs-variable">g:lsc_server_commands</span> = {
-  \ <span class="hljs-string">'scala'</span>: <span class="hljs-string">'metals-vim'</span>
+  \  <span class="hljs-string">'scala'</span>: {
+  \    <span class="hljs-string">'command'</span>: <span class="hljs-string">'metals-vim'</span>,
+  \    <span class="hljs-string">'log_level'</span>: <span class="hljs-string">'Log'</span>
+  \  }
   \}
 <span class="hljs-keyword">let</span> <span class="hljs-variable">g:lsc_auto_map</span> = {
-    \ <span class="hljs-string">'GoToDefinition'</span>: <span class="hljs-string">'gd'</span>,
-    \}
+  \  <span class="hljs-string">'GoToDefinition'</span>: <span class="hljs-string">'gd'</span>,
+  \}
 </code></pre>
 <p>Run <code>:PlugInstall</code> to install the plugin. If you already have <code>vim-lsc</code>
 installed, be sure to update to the latest version with <code>:PlugUpdate</code>.</p>
@@ -85,8 +88,8 @@ exist yet.</p>
 <td><code>-r sonatype:releases</code></td>
 </tr>
 <tr>
-<td>0.3.3+117-86782c19-SNAPSHOT</td>
-<td>12 Jan 2019 16:28</td>
+<td>0.3.3+119-fdc45667-SNAPSHOT</td>
+<td>12 Jan 2019 16:31</td>
 <td><code>-r sonatype:snapshots</code></td>
 </tr>
 </tbody>
