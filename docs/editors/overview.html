@@ -60,7 +60,7 @@ functionality.</p>
 <tr>
 <td>Atom</td>
 <td align=center>Single click</td>
-<td align=center>Built-in</td>
+<td align=center>✅</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
@@ -72,7 +72,7 @@ functionality.</p>
 <tr>
 <td>Vim</td>
 <td align=center>Few steps</td>
-<td align=center>Built-in</td>
+<td align=center>✅</td>
 <td align=center>Escaped newlines</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
@@ -84,7 +84,7 @@ functionality.</p>
 <tr>
 <td>Sublime Text 3</td>
 <td align=center>Few steps</td>
-<td align=center>Built-in</td>
+<td align=center>✅</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
@@ -96,7 +96,7 @@ functionality.</p>
 <tr>
 <td>Emacs</td>
 <td align=center>Few steps</td>
-<td align=center>Built-in</td>
+<td align=center>✅</td>
 <td align=center>Single buffer</td>
 <td align=center>✅</td>
 <td align=center>✅</td>
@@ -182,8 +182,11 @@ references to the super method <code>Animal.name()</code>.</li>
 <p><strong>Flat</strong>: Document symbols are displayed in a flat outline.</p>
 <p><img src="https://user-images.githubusercontent.com/1408093/50635569-014c7180-0f53-11e9-8898-62803898781c.gif" alt="Document Symbols"></p>
 <h2><a class="anchor" aria-hidden="true" id="workspace-symbols"></a><a href="#workspace-symbols" aria-hidden="true" class="hash-link"><svg class="hash-link-icon" aria-hidden="true" height="16" version="1.1" viewBox="0 0 16 16" width="16"><path fill-rule="evenodd" d="M4 9h1v1H4c-1.5 0-3-1.69-3-3.5S2.55 3 4 3h4c1.45 0 3 1.69 3 3.5 0 1.41-.91 2.72-2 3.25V8.59c.58-.45 1-1.27 1-2.09C10 5.22 8.98 4 8 4H4c-.98 0-2 1.22-2 2.5S3 9 4 9zm9-3h-1v1h1c1 0 2 1.22 2 2.5S13.98 12 13 12H9c-.98 0-2-1.22-2-2.5 0-.83.42-1.64 1-2.09V6.25c-1.09.53-2 1.84-2 3.25C6 11.31 7.55 13 9 13h4c1.45 0 3-1.69 3-3.5S14.5 6 13 6z"></path></svg></a>Workspace symbols</h2>
-<p>Fuzzy search a symbol in the workspace of library dependencies by its name.
-All-lowercase queries are treated as case-insensitive searches.</p>
+<p>Fuzzy search a symbol in the workspace of library dependencies by its name.</p>
+<ul>
+<li>All-lowercase queries are treated as case-insensitive searches.</li>
+<li>Queries ending with a dot <code>.</code> list nested symbols.</li>
+</ul>
 <p><img src="https://user-images.githubusercontent.com/1408093/51537603-44fa1300-1e4f-11e9-84f2-eb7d4c6fc7ef.gif" alt="Fuzzy symbol search example"></p>
 <h2><a class="anchor" aria-hidden="true" id="formatting"></a><a href="#formatting" aria-hidden="true" class="hash-link"><svg class="hash-link-icon" aria-hidden="true" height="16" version="1.1" viewBox="0 0 16 16" width="16"><path fill-rule="evenodd" d="M4 9h1v1H4c-1.5 0-3-1.69-3-3.5S2.55 3 4 3h4c1.45 0 3 1.69 3 3.5 0 1.41-.91 2.72-2 3.25V8.59c.58-.45 1-1.27 1-2.09C10 5.22 8.98 4 8 4H4c-.98 0-2 1.22-2 2.5S3 9 4 9zm9-3h-1v1h1c1 0 2 1.22 2 2.5S13.98 12 13 12H9c-.98 0-2-1.22-2-2.5 0-.83.42-1.64 1-2.09V6.25c-1.09.53-2 1.84-2 3.25C6 11.31 7.55 13 9 13h4c1.45 0 3-1.69 3-3.5S14.5 6 13 6z"></path></svg></a>Formatting</h2>
 <p>Metals uses Scalafmt to respond to formatting requests from the editor,
