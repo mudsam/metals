@@ -6,7 +6,7 @@ title: Emacs
 Metals works in Emacs thanks to the the
 [`lsp-scala`](https://github.com/rossabaker/lsp-scala) package.
 
-![Emacs demo](../assets/emacs-demo.gif)
+![Emacs demo](https://i.imgur.com/KJQLMZ7.gif)
 
 > The Emacs LSP client has [several known issues](#known-issues). Most
 > critically, diagnostics are not published for unopened buffers meaning compile
@@ -18,14 +18,8 @@ Metals works in Emacs thanks to the the
 
 ## Installation
 
-First, clone the `lsp-scala` repository.
-
-```sh
-git clone https://github.com/rossabaker/lsp-scala.git
-```
-
-Next, update your Emacs configuration to load `lsp-scala` along with its
-dependencies
+To use Metals in Emacs, place this snippet in your Emacs configuration to load
+`lsp-scala` along with its dependencies:
 
 ```el
 ;; Add melpa to your packages repositories
@@ -59,7 +53,6 @@ dependencies
   :hook (lsp-mode . lsp-ui-mode))
 
 (use-package lsp-scala
-  :load-path "~/path/to/lsp-scala"
   :after scala-mode
   :demand t
   ;; Optional - enable lsp-scala automatically in scala files
@@ -87,14 +80,14 @@ usage with Emacs.
 
 To manually trigger a build import, run `M-x lsp-scala-build-import`.
 
-![Import build command](assets/emacs-import-build-command.png)
+![Import build command](https://i.imgur.com/SvGXJDK.png)
 
 ## Run doctor
 
 Run `M-x lsp-scala-doctor-run` to troubleshoot potential configuration problems
 in your build.
 
-![Run doctor command](assets/http-run-doctor.png)
+![Run doctor command](https://i.imgur.com/yelm0jd.png)
 
 ## Known issues
 
@@ -152,9 +145,9 @@ To configure Eglot with Metals:
 
 (use-package eglot
   :pin melpa-stable
-  ;; (optional) Automatically start metals for Scala files.
   :config
   (add-to-list 'eglot-server-programs '(scala-mode . ("metals-emacs")))
+  ;; (optional) Automatically start metals for Scala files.
   :hook (scala-mode . eglot-ensure))
 ```
 

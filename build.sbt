@@ -1,4 +1,4 @@
-def localSnapshotVersion = "0.4.0-SNAPSHOT"
+def localSnapshotVersion = "0.5.0-SNAPSHOT"
 inThisBuild(
   List(
     version ~= { dynVer =>
@@ -89,11 +89,11 @@ lazy val V = new {
   val scala210 = "2.10.7"
   val scala211 = "2.11.12"
   val scala212 = "2.12.8"
-  val scalameta = "4.1.0"
-  val semanticdb = "4.1.0"
+  val scalameta = "4.1.4"
+  val semanticdb = scalameta
   val bsp = "2.0.0-M3"
-  val sbtBloop = "1.2.4"
-  val bloop = "1.2.4"
+  val bloop = "1.2.5"
+  val sbtBloop = bloop
   val scalafmt = "2.0.0-RC4"
   // List of supported Scala versions in SemanticDB. Needs to be manually updated
   // for every SemanticDB upgrade.
@@ -110,8 +110,7 @@ lazy val mtags = project
     crossScalaVersions := List(V.scala212, V.scala211),
     libraryDependencies ++= List(
       "com.thoughtworks.qdox" % "qdox" % "2.0-M9", // for java mtags
-      "org.scalameta" %% "contrib" % V.scalameta,
-      "org.jsoup" % "jsoup" % "1.11.3"
+      "org.scalameta" %% "scalameta" % V.scalameta
     )
   )
 
@@ -216,6 +215,9 @@ lazy val input = project
   .in(file("tests/input"))
   .settings(
     skip.in(publish) := true,
+    scalacOptions ++= List(
+      "-P:semanticdb:synthetics:on"
+    ),
     libraryDependencies ++= List(
       // these projects have macro annotations
       "org.scalameta" %% "scalameta" % V.scalameta,
