@@ -58,7 +58,8 @@ final case class MetalsServerConfig(
       default = true
     ),
     icons: Icons = Icons.default,
-    statistics: StatisticsConfig = StatisticsConfig.default
+    statistics: StatisticsConfig = StatisticsConfig.default,
+    compilers: CompilersConfig = CompilersConfig()
 ) {
   override def toString: String =
     List[String](
@@ -78,7 +79,7 @@ final case class MetalsServerConfig(
 }
 object MetalsServerConfig {
   def isTesting: Boolean = "true" == System.getProperty("metals.testing")
-  private def binaryOption(key: String, default: Boolean): Boolean =
+  def binaryOption(key: String, default: Boolean): Boolean =
     System.getProperty(key) match {
       case "true" | "on" => true
       case "false" | "off" => false
@@ -94,7 +95,10 @@ object MetalsServerConfig {
           slowTask = SlowTaskConfig.on,
           icons = Icons.vscode,
           executeClientCommand = ExecuteClientCommandConfig.on,
-          globSyntax = GlobSyntaxConfig.vscode
+          globSyntax = GlobSyntaxConfig.vscode,
+          compilers = CompilersConfig().copy(
+            parameterHint = Some("editor.action.triggerParameterHints")
+          )
         )
       case "vim-lsc" =>
         base.copy(
