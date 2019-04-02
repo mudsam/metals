@@ -270,7 +270,12 @@ object MetalsEnrichments
     }
 
     def isSbtRelated(workspace: AbsolutePath): Boolean = {
-      val isToplevel = Set(workspace.toNIO, workspace.toNIO.resolve("project"))
+      val project = workspace.toNIO.resolve("project")
+      val isToplevel = Set(
+        workspace.toNIO,
+        project,
+        project.resolve("project")
+      )
       isToplevel(path.toNIO.getParent) && {
         val filename = path.toNIO.getFileName.toString
         filename.endsWith("build.properties") ||
@@ -295,6 +300,21 @@ object MetalsEnrichments
       } else {
         path
       }
+
+    def exists: Boolean = {
+      Files.exists(path.toNIO)
+    }
+
+    def touch(): Unit = {
+      if (!path.exists) {
+        parent.createDirectories()
+        Files.createFile(path.toNIO)
+      }
+    }
+
+    def parent: AbsolutePath = {
+      AbsolutePath(path.toNIO.getParent)
+    }
 
     def createDirectories(): AbsolutePath = {
       AbsolutePath(Files.createDirectories(dealias.toNIO))

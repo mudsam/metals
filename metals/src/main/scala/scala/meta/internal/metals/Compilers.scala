@@ -1,9 +1,11 @@
 package scala.meta.internal.metals
 
 import ch.epfl.scala.bsp4j.BuildTargetIdentifier
+import ch.epfl.scala.bsp4j.CompileReport
 import ch.epfl.scala.bsp4j.ScalaBuildTarget
 import ch.epfl.scala.bsp4j.ScalacOptionsItem
 import java.util.Collections
+import java.util.Optional
 import java.util.concurrent.ScheduledExecutorService
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionList
@@ -31,6 +33,7 @@ import scala.tools.nsc.Properties
 class Compilers(
     workspace: AbsolutePath,
     config: MetalsServerConfig,
+    userConfig: () => UserConfiguration,
     buildTargets: BuildTargets,
     buffers: Buffers,
     search: SymbolSearch,
@@ -60,8 +63,20 @@ class Compilers(
       s"restarted ${count} presentation compiler${LogMessages.plural(count)}"
     )
   }
-  def didCompileSuccessfully(id: BuildTargetIdentifier): Unit = {
-    cache.remove(id).foreach(_.shutdown())
+
+  def didCompile(report: CompileReport): Unit = {
+    if (report.getErrors > 0) {
+      cache.get(report.getTarget).foreach(_.restart())
+    } else {
+      // Restart PC for all build targets that depend on this target since the classfiles
+      // may have changed.
+      for {
+        target <- buildTargets.inverseDependencies(report.getTarget)
+        compiler <- cache.get(target)
+      } {
+        compiler.restart()
+      }
+    }
   }
 
   def completionItemResolve(
@@ -89,36 +104,51 @@ class Compilers(
       params: CompletionParams,
       token: CancelToken
   ): Option[CompletionList] =
-    withPC(params) { (pc, pos) =>
+    withPC(params, None) { (pc, pos) =>
       pc.complete(
         CompilerOffsetParams(pos.input.syntax, pos.input.text, pos.start, token)
       )
     }
   def hover(
       params: TextDocumentPositionParams,
-      token: CancelToken
-  ): Option[Hover] =
-    withPC(params) { (pc, pos) =>
-      pc.hoverForDebuggingPurposes(
+      token: CancelToken,
+      interactiveSemanticdbs: InteractiveSemanticdbs
+  ): Option[Optional[Hover]] =
+    withPC(params, Some(interactiveSemanticdbs)) { (pc, pos) =>
+      pc.hover(
         CompilerOffsetParams(pos.input.syntax, pos.input.text, pos.start, token)
       )
     }
   def signatureHelp(
       params: TextDocumentPositionParams,
-      token: CancelToken
+      token: CancelToken,
+      interactiveSemanticdbs: InteractiveSemanticdbs
   ): Option[SignatureHelp] =
-    withPC(params) { (pc, pos) =>
+    withPC(params, Some(interactiveSemanticdbs)) { (pc, pos) =>
       pc.signatureHelp(
         CompilerOffsetParams(pos.input.syntax, pos.input.text, pos.start, token)
       )
     }
 
-  private def loadCompiler(path: AbsolutePath): Option[PresentationCompiler] = {
+  def loadCompiler(
+      path: AbsolutePath,
+      interactiveSemanticdbs: Option[InteractiveSemanticdbs]
+  ): Option[PresentationCompiler] =
     for {
-      target <- buildTargets.inverseSources(path)
+      target <- buildTargets
+        .inverseSources(path)
+        .orElse(interactiveSemanticdbs.flatMap(_.getBuildTarget(path)))
+      compiler <- loadCompiler(target)
+    } yield compiler
+  def loadCompiler(
+      target: BuildTargetIdentifier
+  ): Option[PresentationCompiler] = {
+    for {
       info <- buildTargets.info(target)
       scala <- info.asScalaBuildTarget
-      isSupported = ScalaVersions.isSupportedScalaVersion(scala.getScalaVersion)
+      isSupported = ScalaVersions.isSupportedScalaVersion(
+        ScalaVersions.dropVendorSuffix(scala.getScalaVersion)
+      )
       _ = {
         if (!isSupported) {
           scribe.warn(s"unsupported Scala ${scala.getScalaVersion}")
@@ -140,10 +170,11 @@ class Compilers(
   }
 
   private def withPC[T](
-      params: TextDocumentPositionParams
+      params: TextDocumentPositionParams,
+      interactiveSemanticdbs: Option[InteractiveSemanticdbs]
   )(fn: (PresentationCompiler, Position) => T): Option[T] = {
     val path = params.getTextDocument.getUri.toAbsolutePath
-    loadCompiler(path).map { compiler =>
+    loadCompiler(path, interactiveSemanticdbs).map { compiler =>
       val input = path.toInputFromBuffers(buffers)
       val pos = params.getPosition.toMeta(input)
       val result = fn(compiler, pos)
@@ -157,7 +188,7 @@ class Compilers(
   ): PresentationCompiler = {
     val classpath = scalac.classpath.map(_.toNIO).toSeq
     val pc: PresentationCompiler =
-      if (info.getScalaVersion == Properties.versionNumberString) {
+      if (ScalaVersions.dropVendorSuffix(info.getScalaVersion) == Properties.versionNumberString) {
         new ScalaPresentationCompiler()
       } else {
         embedded.presentationCompiler(info, scalac)
@@ -166,7 +197,9 @@ class Compilers(
     pc.withSearch(search)
       .withExecutorService(ec)
       .withScheduledExecutorService(sh)
-      .withConfiguration(config.compilers)
+      .withConfiguration(
+        config.compilers.copy(_symbolPrefixes = userConfig().symbolPrefixes)
+      )
       .newInstance(
         scalac.getTarget.getUri,
         classpath.asJava,

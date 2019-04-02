@@ -13,6 +13,7 @@ import java.util
 import java.util.Collections
 import java.util.concurrent.ScheduledExecutorService
 import org.eclipse.lsp4j.ClientCapabilities
+import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionParams
 import scala.meta.internal.metals.PositionSyntax._
 import org.eclipse.lsp4j.DidChangeConfigurationParams
@@ -33,6 +34,7 @@ import org.eclipse.lsp4j.TextDocumentClientCapabilities
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
+import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceClientCapabilities
@@ -325,17 +327,17 @@ final class TestingServer(
   }
 
   def didChangeConfiguration(config: String): Future[Unit] = {
-    Future {
-      val wrapped = UserConfiguration.toWrappedJson(config)
-      val json = new JsonParser().parse(wrapped)
-      server.didChangeConfiguration(new DidChangeConfigurationParams(json))
-    }
+    val wrapped = UserConfiguration.toWrappedJson(config)
+    val json = new JsonParser().parse(wrapped)
+    server
+      .didChangeConfiguration(new DidChangeConfigurationParams(json))
+      .asScala
   }
 
-  def completion(
+  def completionList(
       filename: String,
       query: String
-  ): Future[String] = {
+  ): Future[CompletionList] = {
     val path = toPath(filename)
     val input = path.toInputFromBuffers(buffers)
     val offset = query.indexOf("@@")
@@ -347,16 +349,83 @@ final class TestingServer(
     val pos = m.Position.Range(input, point, point)
     val params =
       new CompletionParams(path.toTextDocumentIdentifier, pos.toLSP.getStart)
+    server.completion(params).asScala
+  }
+
+  def formatCompletion(
+      completion: CompletionList,
+      includeDetail: Boolean
+  ): String = {
+    val items =
+      completion.getItems.asScala.map(server.completionItemResolveSync)
+    items.iterator
+      .map { item =>
+        val label = TestCompletions.getFullyQualifiedLabel(item)
+        val detail =
+          if (includeDetail && !label.contains(item.getDetail)) item.getDetail
+          else ""
+        label + detail
+      }
+      .mkString("\n")
+  }
+
+  private def offsetParams(
+      filename: String,
+      original: String,
+      root: AbsolutePath
+  ): Future[(String, TextDocumentPositionParams)] = {
+    val offset = original.indexOf("@@")
+    if (offset < 0) sys.error(s"missing @@\n$original")
+    val text = original.replaceAllLiterally("@@", "")
+    val input = m.Input.String(text)
+    val path = root.resolve(filename)
+    path.touch()
+    val pos = m.Position.Range(input, offset, offset)
     for {
-      completion <- server.completion(params).asScala
+      _ <- didChange(filename)(_ => text)
     } yield {
-      val items =
-        completion.getItems.asScala.map(server.completionItemResolveSync)
-      items.iterator
-        .map(
-          item => TestCompletions.getFullyQualifiedLabel(item) + item.getDetail
+      (
+        text,
+        new TextDocumentPositionParams(
+          path.toTextDocumentIdentifier,
+          pos.toLSP.getStart
         )
-        .mkString("\n")
+      )
+    }
+  }
+
+  def assertHover(
+      filename: String,
+      query: String,
+      expected: String,
+      root: AbsolutePath = workspace
+  ): Future[Unit] = {
+    for {
+      hover <- hover(filename, query, root)
+    } yield {
+      DiffAssertions.assertNoDiffOrPrintObtained(
+        hover,
+        expected,
+        "obtained",
+        "expected"
+      )
+    }
+  }
+
+  def hover(
+      filename: String,
+      query: String,
+      root: AbsolutePath
+  ): Future[String] = {
+    for {
+      (text, params) <- offsetParams(filename, query, root)
+      hover <- server.hover(params).asScala
+    } yield TestHovers.renderAsString(text, Option(hover), includeRange = false)
+  }
+
+  def completion(filename: String, query: String): Future[String] = {
+    completionList(filename, query).map { c =>
+      formatCompletion(c, includeDetail = true)
     }
   }
 
@@ -390,6 +459,7 @@ final class TestingServer(
         .mkString("\n")
     }
   }
+
   def formatting(filename: String): Future[Unit] = {
     val path = toPath(filename)
     server

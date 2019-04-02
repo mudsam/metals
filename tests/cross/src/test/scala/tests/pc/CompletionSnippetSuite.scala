@@ -86,7 +86,7 @@ object CompletionSnippetSuite extends BaseCompletionSuite {
         |  def foo(param: ArrayDeque@@)
         |}
         |""".stripMargin,
-    """|java.util.ArrayDeque[$0]
+    """|ju.ArrayDeque[$0]
        |""".stripMargin
   )
 
@@ -96,7 +96,7 @@ object CompletionSnippetSuite extends BaseCompletionSuite {
         |  new SimpleFileVisitor@@
         |}
         |""".stripMargin,
-    """|java.nio.file.SimpleFileVisitor[$0]
+    """|SimpleFileVisitor[$0]
        |""".stripMargin
   )
 
@@ -131,6 +131,60 @@ object CompletionSnippetSuite extends BaseCompletionSuite {
     """|Iterable
        |Iterable[$0]
        |""".stripMargin
+  )
+
+  checkEditLine(
+    "trailing-paren",
+    s"""|object Main {
+        |  def trailing(a: Int) = ()
+        |  ___
+        |}
+        |""".stripMargin,
+    "trailing@@()",
+    "trailing($0)"
+  )
+
+  checkEditLine(
+    "trailing-brace",
+    s"""|object Main {
+        |  def trailing(a: Int) = ()
+        |  ___
+        |}
+        |""".stripMargin,
+    "trailing@@ { }",
+    "trailing {$0 }"
+  )
+
+  checkEditLine(
+    "trailing-brace1",
+    s"""|object Main {
+        |  def trailing(a: Int) = ()
+        |  ___
+        |}
+        |""".stripMargin,
+    "trailing@@{ }",
+    "trailing{$0 }"
+  )
+
+  checkEditLine(
+    "trailing-eta",
+    s"""|object Main {
+        |  def trailing(a: Int) = ()
+        |  ___
+        |}
+        |""".stripMargin,
+    "trailing@@ _",
+    "trailing _$0"
+  )
+
+  checkEditLine(
+    "implicit",
+    s"""|object Main {
+        |  ___
+        |}
+        |""".stripMargin,
+    "List(1).flatte@@",
+    "List(1).flatten"
   )
 
 }

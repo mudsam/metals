@@ -1,9 +1,6 @@
 package example
 
-object User {
-  val member = ""
-  val myName = "name"
-  def foo = s"""
-  ${User.member}
-  """
+object Main {
+  Option(1).map(_.toString)
+  List(1).flatten
 }

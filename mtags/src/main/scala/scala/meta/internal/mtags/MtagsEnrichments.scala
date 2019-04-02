@@ -25,6 +25,7 @@ import scala.meta.internal.{semanticdb => s}
 import scala.meta.io.AbsolutePath
 import scala.util.control.NonFatal
 import scala.{meta => m}
+import org.eclipse.lsp4j.jsonrpc.messages.{Either => JEither}
 
 object MtagsEnrichments extends MtagsEnrichments
 trait MtagsEnrichments {
@@ -180,6 +181,11 @@ trait MtagsEnrichments {
       }
   }
   implicit class XtensionStringDoc(doc: String) {
+    def endsWithAt(value: String, offset: Int): Boolean = {
+      val start = offset - value.length
+      start >= 0 &&
+      doc.startsWith(value, start)
+    }
     def toMarkupContent: l.MarkupContent = {
       val content = new MarkupContent
       content.setKind("markdown")
@@ -258,6 +264,13 @@ trait MtagsEnrichments {
       if (opt.isPresent) Some(opt.get())
       else None
   }
+
+  implicit class XtensionJEitherCross[A, B](either: JEither[A, B]) {
+    def asScala: Either[A, B] =
+      if (either.isLeft) Left(either.getLeft)
+      else Right(either.getRight)
+  }
+
   implicit class XtensionPositionLsp(pos: m.Position) {
     def toSemanticdb: s.Range = {
       new s.Range(

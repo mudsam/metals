@@ -6,6 +6,7 @@ import scala.concurrent.duration.Duration
 import scala.language.experimental.macros
 import scala.meta.io.AbsolutePath
 import scala.reflect.ClassTag
+import scala.util.Properties
 import utest.TestSuite
 import utest.Tests
 import utest.asserts.Asserts
@@ -14,15 +15,15 @@ import utest.framework.TestCallTree
 import utest.framework.Tree
 import utest.ufansi.Attrs
 import utest.ufansi.Str
+import scala.meta.internal.metals.Testing
 
 /**
  * Test suite that replace utest DSL with FunSuite-style syntax from ScalaTest.
- *
- * Exposes
- *
  */
 class BaseSuite extends TestSuite {
-  System.setProperty("metals.testing", "true")
+  Testing.enable()
+  def isScala211: Boolean =
+    Properties.versionNumberString.startsWith("2.11")
   def isWindows: Boolean =
     isAppveyor || isAzureWindows
   def isAppveyor: Boolean =
@@ -96,7 +97,7 @@ class BaseSuite extends TestSuite {
       title: String = ""
   )(implicit filename: sourcecode.File, line: sourcecode.Line): Unit = {
     DiffAssertions.colored {
-      DiffAssertions.assertNoDiffOrPrintExpected(obtained, expected, title)
+      DiffAssertions.assertNoDiff(obtained, expected, title, title)
     }
   }
   override def utestAfterAll(): Unit = afterAll()

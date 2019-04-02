@@ -1,6 +1,8 @@
 package scala.meta.internal.metals
 
 import scala.meta.internal.metals.Configs._
+import scala.meta.internal.pc.PresentationCompilerConfigImpl
+import scala.meta.pc.PresentationCompilerConfig.OverrideDefFormat
 
 /**
  * Configuration parameters for the Metals language server.
@@ -59,7 +61,7 @@ final case class MetalsServerConfig(
     ),
     icons: Icons = Icons.default,
     statistics: StatisticsConfig = StatisticsConfig.default,
-    compilers: CompilersConfig = CompilersConfig()
+    compilers: PresentationCompilerConfigImpl = CompilersConfig()
 ) {
   override def toString: String =
     List[String](
@@ -71,6 +73,7 @@ final case class MetalsServerConfig(
       s"show-message=$showMessage",
       s"show-message-request=$showMessageRequest",
       s"no-initialized=$isNoInitialized",
+      s"compilers=$compilers",
       s"http=$isHttpEnabled",
       s"input-box=$isInputBoxEnabled",
       s"icons=$icons",
@@ -96,9 +99,12 @@ object MetalsServerConfig {
           icons = Icons.vscode,
           executeClientCommand = ExecuteClientCommandConfig.on,
           globSyntax = GlobSyntaxConfig.vscode,
-          compilers = CompilersConfig().copy(
-            parameterHint = Some("editor.action.triggerParameterHints")
-          )
+          compilers =
+            base.compilers.copy(
+              _parameterHintsCommand =
+                Some("editor.action.triggerParameterHints"),
+              overrideDefFormat = OverrideDefFormat.Unicode
+            )
         )
       case "vim-lsc" =>
         base.copy(
@@ -116,7 +122,11 @@ object MetalsServerConfig {
           showMessage = ShowMessageConfig.logMessage,
           showMessageRequest = ShowMessageRequestConfig.on,
           icons = Icons.unicode,
-          isExitOnShutdown = true
+          isExitOnShutdown = true,
+          compilers = base.compilers.copy(
+            // Avoid showing the method signature twice because it's already visible in the label.
+            isCompletionItemDetailEnabled = false
+          )
         )
       case "emacs" =>
         base.copy(

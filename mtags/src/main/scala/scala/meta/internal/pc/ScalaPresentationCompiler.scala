@@ -3,6 +3,7 @@ package scala.meta.internal.pc
 import java.io.File
 import java.nio.file.Path
 import java.util
+import java.util.Optional
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.logging.Logger
@@ -12,6 +13,7 @@ import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.SignatureHelp
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext
+import scala.meta.internal.metals.EmptyCancelToken
 import scala.meta.pc.OffsetParams
 import scala.meta.pc.PresentationCompiler
 import scala.meta.pc.SymbolSearch
@@ -53,6 +55,12 @@ case class ScalaPresentationCompiler(
     access.shutdown()
   }
 
+  override def restart(): Unit = {
+    // NOTE(olafur) turns out that `shutdown()` has the same effect as `restart()`
+    // implementation-wise.
+    shutdown()
+  }
+
   override def newInstance(
       buildTargetIdentifier: String,
       classpath: util.List[Path],
@@ -71,26 +79,54 @@ case class ScalaPresentationCompiler(
     items
   }
   override def complete(params: OffsetParams): CompletionList =
-    access.withCompiler(emptyCompletion, params.token) { global =>
+    access.withCancelableCompiler(emptyCompletion, params.token) { global =>
       new CompletionProvider(global, params).completions()
     }
+
+  // NOTE(olafur): hover and signature help use a "shared" compiler instance because
+  // we don't typecheck any sources, we only poke into the symbol table.
+  // If we used a shared compiler then we risk hitting `Thread.interrupt`,
+  // which can close open `*-sources.jar` files containing Scaladoc/Javadoc strings.
+
   override def completionItemResolve(
       item: CompletionItem,
       symbol: String
   ): CompletionItem =
-    // NOTE(olafur): we use a "shared" compiler instance here because
-    // we don't typecheck any sources, we only poke into the symbol table.
-    // If we used a shared compiler then we risk hitting `Thread.interrupt`,
-    // which can close open `*-sources.jar` files containing docstrings that
-    // we read in `completionItem/resolve`.
     access.withSharedCompiler(item) { global =>
       new CompletionItemResolver(global).resolve(item, symbol)
     }
 
   override def signatureHelp(params: OffsetParams): SignatureHelp =
-    access.withCompiler(new SignatureHelp(), params.token) { global =>
+    access.withNonCancelableCompiler(
+      new SignatureHelp(),
+      params.token
+    ) { global =>
       new SignatureHelpProvider(global).signatureHelp(params)
     }
+
+  override def hover(
+      params: OffsetParams
+  ): Optional[Hover] =
+    access.withNonCancelableCompiler(
+      Optional.empty[Hover](),
+      params.token
+    ) { global =>
+      Optional.ofNullable(new HoverProvider(global, params).hover().orNull)
+    }
+
+  override def semanticdbTextDocument(
+      filename: String,
+      code: String
+  ): Array[Byte] = {
+    access.withNonCancelableCompiler(
+      Array.emptyByteArray,
+      EmptyCancelToken
+    ) { global =>
+      new SemanticdbTextDocumentProvider(global)
+        .textDocument(filename, code)
+        .toByteArray
+    }
+  }
 
   def newCompiler(): MetalsGlobal = {
     val classpath = this.classpath.mkString(File.pathSeparator)
@@ -127,10 +163,6 @@ case class ScalaPresentationCompiler(
   // Internal methods
   // ================
 
-  override def hoverForDebuggingPurposes(params: OffsetParams): Hover =
-    access.withCompiler(new Hover(), params.token) { global =>
-      new HoverProvider(global).hover(params).orNull
-    }
   override def diagnosticsForDebuggingPurposes(): util.List[String] = {
     access.reporter
       .asInstanceOf[StoreReporter]

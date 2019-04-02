@@ -123,11 +123,6 @@ object JavadocSuite extends BaseSuite {
         |Window win = new Window(parent);
         |win.show();
         |```
-        |**Authors**
-        |- Sami Shaio
-        |
-        |**Version:** 1.15, 13 Dec 2006
-        |
         |**See**
         |- [java.awt.BaseWindow](java.awt.BaseWindow)
         |- [java.awt.Button](java.awt.Button)

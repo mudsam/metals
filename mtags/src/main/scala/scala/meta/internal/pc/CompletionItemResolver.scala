@@ -3,6 +3,7 @@ package scala.meta.internal.pc
 import org.eclipse.lsp4j.CompletionItem
 import scala.collection.JavaConverters._
 import scala.meta.internal.mtags.MtagsEnrichments._
+import scala.meta.pc.SymbolDocumentation
 
 class CompletionItemResolver(
     val compiler: MetalsGlobal
@@ -14,19 +15,17 @@ class CompletionItemResolver(
       symbolDocumentation(gsym).orElse(symbolDocumentation(gsym.companion)) match {
         case Some(info) if item.getDetail != null =>
           if (isJavaSymbol(gsym)) {
-            val newDetail = info
-              .parameters()
-              .asScala
-              .iterator
-              .zipWithIndex
-              .foldLeft(item.getDetail) {
-                case (detail, (param, i)) =>
-                  detail.replaceAllLiterally(
-                    s"x$$${i + 1}",
-                    param.displayName()
-                  )
-              }
-            item.setDetail(newDetail)
+            val data = item.data.getOrElse(CompletionItemData.empty)
+            item.setLabel(replaceJavaParameters(info, item.getLabel))
+            if (metalsConfig.isCompletionItemDetailEnabled) {
+              item.setDetail(replaceJavaParameters(info, item.getDetail))
+            }
+            if (item.getTextEdit != null && data.kind == CompletionItemData.OverrideKind) {
+              item.getTextEdit.setNewText(
+                replaceJavaParameters(info, item.getTextEdit.getNewText)
+              )
+              item.setLabel(replaceJavaParameters(info, item.getLabel))
+            }
           } else {
             val defaults = info
               .parameters()
@@ -34,24 +33,61 @@ class CompletionItemResolver(
               .iterator
               .map(_.defaultValue())
               .filterNot(_.isEmpty)
-            val matcher = "= \\{\\}".r.pattern.matcher(item.getDetail)
-            val out = new StringBuffer()
-            while (matcher.find()) {
-              if (defaults.hasNext) {
-                matcher.appendReplacement(out, s"= ${defaults.next()}")
-              }
+              .toSeq
+            item.setLabel(replaceScalaDefaultParams(item.getLabel, defaults))
+            if (metalsConfig.isCompletionItemDetailEnabled) {
+              item.setDetail(
+                replaceScalaDefaultParams(item.getDetail, defaults)
+              )
             }
-            matcher.appendTail(out)
-            item.setDetail(out.toString)
           }
-          val docstring = fullDocstring(gsym)
-          item.setDocumentation(docstring.toMarkupContent)
+          if (metalsConfig.isCompletionItemDocumentationEnabled) {
+            val docstring = fullDocstring(gsym)
+            item.setDocumentation(docstring.toMarkupContent)
+          }
         case _ =>
       }
       item
     } else {
       item
     }
+  }
+
+  def replaceScalaDefaultParams(base: String, defaults: Seq[String]): String = {
+    val matcher = "= \\{\\}".r.pattern.matcher(base)
+    val out = new StringBuffer()
+    val it = defaults.iterator
+    while (matcher.find()) {
+      if (it.hasNext) {
+        matcher.appendReplacement(out, s"= ${it.next()}")
+      }
+    }
+    matcher.appendTail(out)
+    out.toString
+  }
+
+  // NOTE(olafur): it's hacky to use `String.replaceAllLiterally("x$1", paramName)`, ideally we would use the
+  // signature printer to pretty-print the signature from scratch with parameter names. However, that approach
+  // is tricky because it would require us to JSON serialize/deserialize Scala compiler types. The reason
+  // we don't print Java parameter names in `textDocument/completions` is because that requires parsing the
+  // library dependency sources which is slow and `Thread.interrupt` cancellation triggers the `*-sources.jar`
+  // to close causing other problems.
+  private def replaceJavaParameters(
+      info: SymbolDocumentation,
+      detail: String
+  ): String = {
+    info
+      .parameters()
+      .asScala
+      .iterator
+      .zipWithIndex
+      .foldLeft(detail) {
+        case (accum, (param, i)) =>
+          accum.replaceAllLiterally(
+            s"x$$${i + 1}",
+            param.displayName()
+          )
+      }
   }
 
   def fullDocstring(gsym: Symbol): String = {

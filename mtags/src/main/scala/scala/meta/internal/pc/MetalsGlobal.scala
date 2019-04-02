@@ -8,6 +8,7 @@ import scala.meta.internal.semanticdb.scalac.SemanticdbOps
 import scala.meta.pc.PresentationCompilerConfig
 import scala.meta.pc.SymbolDocumentation
 import scala.meta.pc.SymbolSearch
+import scala.reflect.internal.util.Position
 import scala.reflect.internal.{Flags => gf}
 import scala.tools.nsc.Mode
 import scala.tools.nsc.Settings
@@ -15,6 +16,7 @@ import scala.tools.nsc.interactive.Global
 import scala.tools.nsc.interactive.GlobalProxy
 import scala.tools.nsc.interactive.InteractiveAnalyzer
 import scala.tools.nsc.reporters.Reporter
+import scala.util.control.NonFatal
 
 class MetalsGlobal(
     settings: Settings,
@@ -25,7 +27,9 @@ class MetalsGlobal(
 ) extends Global(settings, reporter)
     with Completions
     with Signatures
-    with GlobalProxy { compiler =>
+    with Compat
+    with GlobalProxy {
+  compiler =>
   hijackPresentationCompilerThread()
 
   val logger: Logger = Logger.getLogger(classOf[MetalsGlobal].getName)
@@ -41,7 +45,7 @@ class MetalsGlobal(
      * - we insure ourselves from misbehaving macro library that mess up with compiler APIs
      * - we avoid potentially expensive computation during macro expansion
      * It's safe to disable blackbox macros because they don't affect typing, meaning
-     * they cannot change the results from completions/signatureHelp/hoverForDebuggingPurposes.
+     * they cannot change the results from completions/signatureHelp/hover.
      *
      * Here are basic benchmark numbers running completions in Exprs.scala from fastparse,
      * a 150 line source file where a scope completion triggers 80 macros.
@@ -83,8 +87,18 @@ class MetalsGlobal(
     symbol.toSemantic
   }
 
-  def printPretty(pos: Position): Unit = {
-    println(pretty(pos))
+  def printPretty(pos: sourcecode.Text[Position]): Unit = {
+    import scala.meta.internal.metals.PositionSyntax._
+    val input = scala.meta.Input.String(new String(pos.value.source.content))
+    val (start, end) =
+      if (pos.value.isRange) {
+        (pos.value.start, pos.value.end)
+      } else {
+        (pos.value.point, pos.value.point)
+      }
+    val range =
+      scala.meta.Position.Range(input, start, end)
+    println(range.formatMessage("info", pos.source))
   }
 
   def pretty(pos: Position): String = {
@@ -126,6 +140,20 @@ class MetalsGlobal(
   }
 
   /**
+   * A `Type` with custom pretty-printing representation, not used for typechecking.
+   *
+   * NOTE(olafur) Creating a new `Type` subclass is a hack, a better long-term solution would be
+   * to implement a custom pretty-printer for types so that we don't have to rely on `Type.toString`.
+   */
+  class PrettyType(
+      override val prefixString: String,
+      override val safeToString: String
+  ) extends Type {
+    def this(string: String) =
+      this(string + ".", string)
+  }
+
+  /**
    * Shortens fully qualified package prefixes to make type signatures easier to read.
    *
    * It becomes difficult to read method signatures when they have a large number of parameters
@@ -133,32 +161,63 @@ class MetalsGlobal(
    * making sure to not convert two different symbols into same short name.
    */
   def shortType(longType: Type, history: ShortenedNames): Type = {
-    def loop(tpe: Type, name: Option[Name]): Type = tpe match {
+    def loop(tpe: Type, name: Option[ShortName]): Type = tpe match {
       case TypeRef(pre, sym, args) =>
-        if (sym.isAliasType &&
-          (sym.isAbstract || sym.overrides.lastOption.exists(_.isAbstract))) {
-          // Always dealias abstract type aliases but leave concrete aliases alone.
-          // trait Generic { type Repr /* dealias */ }
-          // type Catcher[T] = PartialFunction[Throwable, T] // no dealias
-          loop(tpe.dealias, name)
-        } else {
-          TypeRef(
-            loop(pre, Some(sym.name)),
-            sym,
-            args.map(arg => loop(arg, None))
-          )
+        val ownerSymbol = pre.termSymbol
+        history.config.get(ownerSymbol) match {
+          case Some(rename)
+              if history.tryShortenName(ShortName(rename, ownerSymbol)) =>
+            TypeRef(
+              new PrettyType(rename.toString),
+              sym,
+              args.map(arg => loop(arg, None))
+            )
+          case _ =>
+            history.renames.get(sym) match {
+              case Some(rename) if history.nameResolvesToSymbol(rename, sym) =>
+                TypeRef(
+                  NoPrefix,
+                  sym.newErrorSymbol(rename),
+                  args.map(arg => loop(arg, None))
+                )
+              case _ =>
+                if (sym.isAliasType &&
+                  (sym.isAbstract ||
+                  sym.overrides.lastOption.exists(_.isAbstract))) {
+                  // Always dealias abstract type aliases but leave concrete aliases alone.
+                  // trait Generic { type Repr /* dealias */ }
+                  // type Catcher[T] = PartialFunction[Throwable, T] // no dealias
+                  loop(tpe.dealias, name)
+                } else if (history.owners(pre.typeSymbol)) {
+                  if (history.nameResolvesToSymbol(sym.name, sym)) {
+                    TypeRef(NoPrefix, sym, args.map(arg => loop(arg, None)))
+                  } else {
+                    TypeRef(
+                      ThisType(pre.typeSymbol),
+                      sym,
+                      args.map(arg => loop(arg, None))
+                    )
+                  }
+                } else {
+                  TypeRef(
+                    loop(pre, Some(ShortName(sym))),
+                    sym,
+                    args.map(arg => loop(arg, None))
+                  )
+                }
+            }
         }
       case SingleType(pre, sym) =>
         if (sym.hasPackageFlag) {
-          if (history.tryShortenName(name, sym)) NoPrefix
+          if (history.tryShortenName(name)) NoPrefix
           else tpe
         } else {
-          SingleType(loop(pre, Some(sym.name)), sym)
+          SingleType(loop(pre, Some(ShortName(sym))), sym)
         }
       case ThisType(sym) =>
         if (sym.hasPackageFlag) {
-          if (history.tryShortenName(name, sym)) NoPrefix
-          else tpe
+          if (history.tryShortenName(name)) NoPrefix
+          else new PrettyType(history.fullname(sym))
         } else {
           TypeRef(NoPrefix, sym, Nil)
         }
@@ -183,8 +242,11 @@ class MetalsGlobal(
         TypeBounds(loop(lo, None), loop(hi, None))
       case MethodType(params, resultType) =>
         MethodType(params, loop(resultType, None))
+      case ErrorType =>
+        definitions.AnyTpe
       case t => t
     }
+
     longType match {
       case ThisType(_) => longType
       case _ => loop(longType, None)
@@ -204,12 +266,21 @@ class MetalsGlobal(
   def inverseSemanticdbSymbols(symbol: String): List[Symbol] = {
     import scala.meta.internal.semanticdb.Scala._
     if (!symbol.isGlobal) return Nil
+
     def loop(s: String): List[Symbol] = {
       if (s.isNone || s.isRootPackage) rootMirror.RootPackage :: Nil
       else if (s.isEmptyPackage) rootMirror.EmptyPackage :: Nil
-      else {
+      else if (s.isPackage) {
+        try {
+          rootMirror.staticPackage(s.stripSuffix("/").replace("/", ".")) :: Nil
+        } catch {
+          case NonFatal(_) =>
+            Nil
+        }
+      } else {
         val (desc, parent) = DescriptorParser(s)
         val parentSymbol = loop(parent)
+
         def tryMember(sym: Symbol): List[Symbol] =
           sym match {
             case NoSymbol =>
@@ -239,10 +310,19 @@ class MetalsGlobal(
                     .toList
               }
           }
+
         parentSymbol.flatMap(tryMember)
       }
     }
-    loop(symbol).filterNot(_ == NoSymbol)
+
+    try loop(symbol).filterNot(_ == NoSymbol)
+    catch {
+      case NonFatal(e) =>
+        logger.severe(
+          s"invalid SemanticDB symbol: $symbol\n${e.getMessage}"
+        )
+        Nil
+    }
   }
 
   def inverseSemanticdbSymbol(symbol: String): Symbol = {
@@ -304,12 +384,20 @@ class MetalsGlobal(
   // Needed for 2.11 where `Name` doesn't extend CharSequence.
   implicit def nameToCharSequence(name: Name): CharSequence =
     name.toString
+
   implicit class XtensionPositionMetals(pos: Position) {
     private def toPos(offset: Int): l.Position = {
       val line = pos.source.offsetToLine(offset)
       val column = offset - pos.source.lineToOffset(line)
       new l.Position(line, column)
     }
+
+    def isAfter(other: Position): Boolean = {
+      pos.isDefined &&
+      other.isDefined &&
+      pos.point > other.point
+    }
+
     def toLSP: l.Range = {
       if (pos.isRange) {
         new l.Range(toPos(pos.start), toPos(pos.end))
@@ -319,7 +407,70 @@ class MetalsGlobal(
       }
     }
   }
+
+  implicit class XtensionContextMetals(context: Context) {
+    def nameIsInScope(name: Name): Boolean =
+      context.lookupSymbol(name, _ => true) != LookupNotFound
+    def symbolIsInScope(sym: Symbol): Boolean =
+      nameResolvesToSymbol(sym.name, sym)
+    def nameResolvesToSymbol(name: Name, sym: Symbol): Boolean =
+      context.lookupSymbol(name, _ => true).symbol match {
+        case `sym` => true
+        case other =>
+          other.dealiased == sym ||
+            dealiasedValForwarder(other).contains(sym)
+      }
+  }
+  implicit class XtensionDefTreeMetals(defn: DefTree) {
+
+    /** Returns the position of the name/identifier of this definition. */
+    def namePos: Position = {
+      val start = defn.pos.point
+      val end = start + defn.name.length()
+      Position.range(defn.pos.source, start, start, end)
+    }
+
+  }
   implicit class XtensionSymbolMetals(sym: Symbol) {
+    def fullNameSyntax: String = {
+      val out = new java.lang.StringBuilder
+      def loop(s: Symbol): Unit = {
+        if (s.isRoot || s.isRootPackage || s == NoSymbol || s.owner.isEffectiveRoot) {
+          out.append(Identifier(s.name))
+        } else {
+          loop(s.effectiveOwner.enclClass)
+          out.append('.').append(Identifier(s.name))
+        }
+      }
+      loop(sym)
+      out.toString
+    }
+    def isLocallyDefinedSymbol: Boolean = {
+      sym.isLocalToBlock && sym.pos.isDefined
+    }
+
+    def asInfixPattern: Option[String] =
+      if (sym.isCase &&
+        !Character.isUnicodeIdentifierStart(sym.decodedName.head)) {
+        sym.primaryConstructor.paramss match {
+          case (a :: b :: Nil) :: _ =>
+            Some(s"${a.decodedName} ${sym.decodedName} ${b.decodedName}")
+          case _ => None
+        }
+      } else {
+        None
+      }
+
+    def isKindaTheSameAs(other: Symbol): Boolean = {
+      if (sym.hasPackageFlag) {
+        // NOTE(olafur) hacky workaround for comparing module symbol with package symbol
+        other.fullName == sym.fullName
+      } else {
+        other.dealiased == sym.dealiased ||
+        other.companion == sym.dealiased
+      }
+    }
+
     def snippetCursor: String = sym.paramss match {
       case Nil =>
         "$0"
@@ -328,19 +479,24 @@ class MetalsGlobal(
       case _ =>
         "($0)"
     }
+
     def isDefined: Boolean =
       sym != null &&
         sym != NoSymbol &&
         !sym.isErroneous
+
     def isNonNullaryMethod: Boolean =
       sym.isMethod &&
         !sym.info.isInstanceOf[NullaryMethodType] &&
         !sym.paramss.isEmpty
+
     def isJavaModule: Boolean =
       sym.isJava && sym.isModule
+
     def hasTypeParams: Boolean =
       sym.typeParams.nonEmpty ||
         (sym.isJavaModule && sym.companionClass.typeParams.nonEmpty)
+
     def requiresTemplateCurlyBraces: Boolean = {
       sym.isTrait || sym.isInterface || sym.isAbstractClass
     }
@@ -350,9 +506,34 @@ class MetalsGlobal(
         sym.isTrait ||
         sym.isInterface ||
         sym.isJavaModule
+
     def dealiased: Symbol =
       if (sym.isAliasType) sym.info.dealias.typeSymbol
       else sym
+  }
+
+  def metalsSeenFromType(tree: Tree, symbol: Symbol): Type = {
+    def qual(t: Tree): Tree = t match {
+      case TreeApply(q, _) => qual(q)
+      case Select(q, _) => q
+      case Import(q, _) => q
+      case t => t
+    }
+    val pre = stabilizedType(qual(tree))
+    val memberType = pre.memberType(symbol)
+    if (memberType.isErroneous) symbol.info
+    else memberType
+  }
+
+  // Extractor for both term and type applications like `foo(1)` and foo[T]`
+  object TreeApply {
+    def unapply(tree: Tree): Option[(Tree, List[Tree])] = tree match {
+      case TypeApply(qual, args) => Some(qual -> args)
+      case Apply(qual, args) => Some(qual -> args)
+      case UnApply(qual, args) => Some(qual -> args)
+      case AppliedTypeTree(qual, args) => Some(qual -> args)
+      case _ => None
+    }
   }
 
 }

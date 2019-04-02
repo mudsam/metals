@@ -175,7 +175,8 @@ class MetalsLanguageServer(
         languageClient,
         tables,
         messages,
-        statusBar
+        statusBar,
+        () => compilers
       )
     )
     warnings = new Warnings(
@@ -200,7 +201,7 @@ class MetalsLanguageServer(
       config,
       statusBar,
       time,
-      id => compilers.didCompileSuccessfully(id)
+      report => compilers.didCompile(report)
     )
     trees = new Trees(buffers, diagnostics)
     documentSymbolProvider = new DocumentSymbolProvider(trees)
@@ -290,6 +291,7 @@ class MetalsLanguageServer(
       new Compilers(
         workspace,
         config,
+        () => userConfig,
         buildTargets,
         buffers,
         new MetalsSymbolSearch(symbolDocs, workspaceSymbols),
@@ -333,6 +335,7 @@ class MetalsLanguageServer(
         )
       )
       capabilities.setDefinitionProvider(true)
+      capabilities.setHoverProvider(true)
       capabilities.setReferencesProvider(true)
       capabilities.setSignatureHelpProvider(
         new SignatureHelpOptions(List("(", "[").asJava)
@@ -442,7 +445,8 @@ class MetalsLanguageServer(
           List[Future[Unit]](
             quickConnectToBuildServer().ignoreValue,
             slowConnectToBuildServer(forceImport = false).ignoreValue,
-            Future(startHttpServer())
+            Future(startHttpServer()),
+            Future(formattingProvider.load())
           )
         )
         .ignoreValue
@@ -579,17 +583,24 @@ class MetalsLanguageServer(
   }
 
   @JsonNotification("workspace/didChangeConfiguration")
-  def didChangeConfiguration(params: DidChangeConfigurationParams): Unit = {
-    val json = params.getSettings.asInstanceOf[JsonElement].getAsJsonObject
-    UserConfiguration.fromJson(json) match {
-      case Left(errors) =>
-        errors.foreach { error =>
-          scribe.error(s"config error: $error")
-        }
-      case Right(value) =>
-        userConfig = value
-    }
-  }
+  def didChangeConfiguration(
+      params: DidChangeConfigurationParams
+  ): CompletableFuture[Unit] =
+    Future {
+      val json = params.getSettings.asInstanceOf[JsonElement].getAsJsonObject
+      UserConfiguration.fromJson(json) match {
+        case Left(errors) =>
+          errors.foreach { error =>
+            scribe.error(s"config error: $error")
+          }
+        case Right(value) =>
+          val old = userConfig
+          userConfig = value
+          if (userConfig.symbolPrefixes != old.symbolPrefixes) {
+            compilers.restartAll()
+          }
+      }
+    }.asJava
 
   @JsonNotification("workspace/didChangeWatchedFiles")
   def didChangeWatchedFiles(
@@ -671,10 +682,14 @@ class MetalsLanguageServer(
       null
     }
 
-  @JsonRequest("textDocument/hoverForDebuggingPurposes")
+  @JsonRequest("textDocument/hover")
   def hover(params: TextDocumentPositionParams): CompletableFuture[Hover] =
     CancelTokens { token =>
-      compilers.hover(params, token).orNull
+      compilers.hover(params, token, interactiveSemanticdbs) match {
+        case None => null
+        case Some(value) =>
+          value.orElse(null)
+      }
     }
 
   @JsonRequest("textDocument/documentHighlight")
@@ -816,7 +831,7 @@ class MetalsLanguageServer(
       params: TextDocumentPositionParams
   ): CompletableFuture[SignatureHelp] =
     CancelTokens { token =>
-      compilers.signatureHelp(params, token).orNull
+      compilers.signatureHelp(params, token, interactiveSemanticdbs).orNull
     }
 
   @JsonRequest("textDocument/codeAction")
@@ -1017,6 +1032,7 @@ class MetalsLanguageServer(
       build: BuildServerConnection
   ): Future[BuildChange] = {
     cancelables.add(build)
+    compilers.cancel()
     buildServer = Some(build)
     val importedBuild = timed("imported build") {
       for {

@@ -14,16 +14,16 @@ object CompletionSuite extends BaseCompletionSuite {
       |  Lis@@
       |}""".stripMargin,
     """|List scala.collection.immutable
-       |java.awt.List java.awt
-       |java.util.List java.util
-       |scala.collection.immutable.ListMap scala.collection.immutable
-       |scala.collection.mutable.ListMap scala.collection.mutable
-       |scala.collection.immutable.ListSet scala.collection.immutable
-       |java.awt.peer.ListPeer java.awt.peer
-       |org.w3c.dom.NameList org.w3c.dom
-       |org.w3c.dom.NodeList org.w3c.dom
-       |java.util.ArrayList java.util
-       |org.w3c.dom.stylesheets.MediaList org.w3c.dom.stylesheets
+       |List - java.awt
+       |List - java.util
+       |ListMap - scala.collection.immutable
+       |ListMap - scala.collection.mutable
+       |ListSet - scala.collection.immutable
+       |ListPeer - java.awt.peer
+       |NameList - org.w3c.dom
+       |NodeList - org.w3c.dom
+       |ArrayList - java.util
+       |MediaList - org.w3c.dom.stylesheets
        |""".stripMargin
   )
 
@@ -73,12 +73,15 @@ object CompletionSuite extends BaseCompletionSuite {
     """|identity(a: Int): Int
        |""".stripMargin
   )
+  List(1)
+
   check(
     "tparam2",
     """
       |object A {
       |  Map.empty[Int, String].getOrEl@@
-      |}""".stripMargin,
+      |}
+      |""".stripMargin,
     """|getOrElse[V1 >: String](key: Int, default: => V1): V1
        |""".stripMargin,
     compat = Map(
@@ -124,12 +127,7 @@ object CompletionSuite extends BaseCompletionSuite {
        |tabulate[A](n1: Int, n2: Int, n3: Int, n4: Int)(f: (Int, Int, Int, Int) => A): List[List[List[List[A]]]]
        |tabulate[A](n1: Int, n2: Int, n3: Int, n4: Int, n5: Int)(f: (Int, Int, Int, Int, Int) => A): List[List[List[List[List[A]]]]]
        |unapplySeq[A](x: List[A]): Some[List[A]]
-       |->[B](y: B): (List.type, B)
        |+(other: String): String
-       |ensuring(cond: Boolean): List.type
-       |ensuring(cond: List.type => Boolean): List.type
-       |ensuring(cond: Boolean, msg: => Any): List.type
-       |ensuring(cond: List.type => Boolean, msg: => Any): List.type
        |formatted(fmtstr: String): String
        |asInstanceOf[T0]: T0
        |equals(obj: Any): Boolean
@@ -162,12 +160,7 @@ object CompletionSuite extends BaseCompletionSuite {
            |tabulate[A](n1: Int, n2: Int, n3: Int, n4: Int)(f: (Int, Int, Int, Int) => A): List[List[List[List[A]]]]
            |tabulate[A](n1: Int, n2: Int, n3: Int, n4: Int, n5: Int)(f: (Int, Int, Int, Int, Int) => A): List[List[List[List[List[A]]]]]
            |unapplySeq[A](x: List[A]): Some[List[A]]
-           |->[B](y: B): (List.type, B)
            |+(other: String): String
-           |ensuring(cond: Boolean): List.type
-           |ensuring(cond: List.type => Boolean): List.type
-           |ensuring(cond: Boolean, msg: => Any): List.type
-           |ensuring(cond: List.type => Boolean, msg: => Any): List.type
            |formatted(fmtstr: String): String
            |asInstanceOf[T0]: T0
            |equals(obj: Any): Boolean
@@ -211,14 +204,14 @@ object CompletionSuite extends BaseCompletionSuite {
       |  new PBuil@@
       |}""".stripMargin,
     """|ProcessBuilder java.lang
-       |scala.sys.process.ProcessBuilder scala.sys.process
-       |java.security.cert.CertPathBuilder java.security.cert
-       |java.security.cert.CertPathBuilderSpi java.security.cert
-       |scala.sys.process.ProcessBuilderImpl scala.sys.process
-       |java.security.cert.CertPathBuilderResult java.security.cert
-       |java.security.cert.PKIXBuilderParameters java.security.cert
-       |java.security.cert.CertPathBuilderException java.security.cert
-       |java.security.cert.PKIXCertPathBuilderResult java.security.cert
+       |ProcessBuilder - scala.sys.process
+       |CertPathBuilder - java.security.cert
+       |CertPathBuilderSpi - java.security.cert
+       |ProcessBuilderImpl - scala.sys.process
+       |CertPathBuilderResult - java.security.cert
+       |PKIXBuilderParameters - java.security.cert
+       |CertPathBuilderException - java.security.cert
+       |PKIXCertPathBuilderResult - java.security.cert
        |""".stripMargin
   )
 
@@ -230,11 +223,11 @@ object CompletionSuite extends BaseCompletionSuite {
       |  TrieMap@@
       |}""".stripMargin,
     """|TrieMap scala.collection.concurrent
-       |scala.collection.parallel.mutable.ParTrieMap scala.collection.parallel.mutable
-       |scala.collection.immutable.HashMap.HashTrieMap scala.collection.immutable.HashMap
-       |scala.collection.parallel.mutable.ParTrieMapCombiner scala.collection.parallel.mutable
-       |scala.collection.parallel.mutable.ParTrieMapSplitter scala.collection.parallel.mutable
-       |scala.collection.concurrent.TrieMapSerializationEnd scala.collection.concurrent
+       |ParTrieMap - scala.collection.parallel.mutable
+       |HashTrieMap - scala.collection.immutable.HashMap
+       |ParTrieMapCombiner - scala.collection.parallel.mutable
+       |ParTrieMapSplitter - scala.collection.parallel.mutable
+       |TrieMapSerializationEnd - scala.collection.concurrent
        |""".stripMargin
   )
 
@@ -252,15 +245,15 @@ object CompletionSuite extends BaseCompletionSuite {
     """
       |import JavaCon@@
       |""".stripMargin,
-    """|scala.collection.JavaConverters scala.collection
-       |scala.collection.JavaConversions scala.collection
-       |scala.concurrent.JavaConversions scala.concurrent
-       |scala.collection.convert.AsJavaConverters scala.collection.convert
+    """|JavaConverters - scala.collection
+       |JavaConversions - scala.collection
+       |JavaConversions - scala.concurrent
+       |AsJavaConverters - scala.collection.convert
        |""".stripMargin,
     compat = Map(
-      "2.11" -> """|scala.collection.JavaConverters scala.collection
-                   |scala.collection.JavaConversions scala.collection
-                   |scala.concurrent.JavaConversions scala.concurrent
+      "2.11" -> """|JavaConverters - scala.collection
+                   |JavaConversions - scala.collection
+                   |JavaConversions - scala.concurrent
                    |""".stripMargin
     )
   )
@@ -270,7 +263,7 @@ object CompletionSuite extends BaseCompletionSuite {
     """
       |import Paths@@
       |""".stripMargin,
-    """|java.nio.file.Paths java.nio.file
+    """|Paths - java.nio.file
        |""".stripMargin
   )
 
@@ -279,7 +272,7 @@ object CompletionSuite extends BaseCompletionSuite {
     """
       |import Catch@@
       |""".stripMargin,
-    """|scala.util.control.Exception.Catch scala.util.control.Exception
+    """|Catch - scala.util.control.Exception
        |""".stripMargin
   )
 
@@ -288,17 +281,17 @@ object CompletionSuite extends BaseCompletionSuite {
     """
       |import Path@@
       |""".stripMargin,
-    """|java.nio.file.Path java.nio.file
-       |java.nio.file.Paths java.nio.file
-       |java.awt.geom.Path2D java.awt.geom
-       |java.security.cert.CertPath java.security.cert
-       |java.awt.font.LayoutPath java.awt.font
-       |java.awt.geom.GeneralPath java.awt.geom
-       |java.nio.file.PathMatcher java.nio.file
-       |org.w3c.dom.xpath.XPathResult org.w3c.dom.xpath
-       |java.awt.geom.PathIterator java.awt.geom
-       |org.w3c.dom.xpath.XPathEvaluator org.w3c.dom.xpath
-       |org.w3c.dom.xpath.XPathException org.w3c.dom.xpath
+    """|Path - java.nio.file
+       |Paths - java.nio.file
+       |Path2D - java.awt.geom
+       |CertPath - java.security.cert
+       |LayoutPath - java.awt.font
+       |GeneralPath - java.awt.geom
+       |PathMatcher - java.nio.file
+       |XPathResult - org.w3c.dom.xpath
+       |PathIterator - java.awt.geom
+       |XPathEvaluator - org.w3c.dom.xpath
+       |XPathException - org.w3c.dom.xpath
        |""".stripMargin
   )
 
@@ -308,9 +301,9 @@ object CompletionSuite extends BaseCompletionSuite {
       |package a
       |import MetaData@@
       |""".stripMargin,
-    """|java.sql.DatabaseMetaData java.sql
-       |java.sql.ParameterMetaData java.sql
-       |java.sql.ResultSetMetaData java.sql
+    """|DatabaseMetaData - java.sql
+       |ParameterMetaData - java.sql
+       |ResultSetMetaData - java.sql
        |""".stripMargin
   )
 
@@ -325,7 +318,7 @@ object CompletionSuite extends BaseCompletionSuite {
       |  class Inner
       |}
       |""".stripMargin,
-    """|a.Outer.Inner a.Outer
+    """|Inner - a.Outer
        |""".stripMargin
   )
 
@@ -359,7 +352,7 @@ object CompletionSuite extends BaseCompletionSuite {
       |}
       |""".stripMargin,
     """Files java.nio.file
-      |a.Outer.Files a.Outer
+      |Files - a.Outer
       |""".stripMargin
   )
 
@@ -501,6 +494,26 @@ object CompletionSuite extends BaseCompletionSuite {
   )
 
   check(
+    "local2",
+    """
+      |object Main {
+      |  def foo(): Unit = {
+      |    val prefixaa = 1
+      |    locally {
+      |      val prefixbb = 2
+      |      println(prefix@@)
+      |      val prefixcc = 3
+      |    }
+      |    val prefixyy = 4
+      |  }
+      |}
+    """.stripMargin,
+    """|prefixbb: Int
+       |prefixaa: Int
+       |""".stripMargin
+  )
+
+  check(
     "singleton",
     """
       |class A {
@@ -621,7 +634,7 @@ object CompletionSuite extends BaseCompletionSuite {
         |  val foo: ListBuffe@@
         |}
         |""".stripMargin,
-    """|scala.collection.mutable.ListBuffer scala.collection.mutable
+    """|ListBuffer - scala.collection.mutable
        |""".stripMargin
   )
 
@@ -631,7 +644,7 @@ object CompletionSuite extends BaseCompletionSuite {
         |  val foo: Map[Int, ListBuffe@@]
         |}
         |""".stripMargin,
-    """|scala.collection.mutable.ListBuffer scala.collection.mutable
+    """|ListBuffer - scala.collection.mutable
        |""".stripMargin
   )
 
@@ -749,8 +762,8 @@ object CompletionSuite extends BaseCompletionSuite {
         |}
         |""".stripMargin,
     """|Number: Regex
-       |Nothing scala
-       |Null scala
+       |Nil scala.collection.immutable
+       |NoManifest scala.reflect
        |""".stripMargin,
     topLines = Option(3)
   )
@@ -764,202 +777,10 @@ object CompletionSuite extends BaseCompletionSuite {
         |}
         |""".stripMargin,
     """|Number: Regex
-       |Nothing scala
-       |Null scala
+       |Nil scala.collection.immutable
+       |NoManifest scala.reflect
        |""".stripMargin,
     topLines = Option(3)
-  )
-
-  check(
-    "arg",
-    s"""|object Main {
-        |  assert(@@)
-        |}
-        |""".stripMargin,
-    """|assertion = : Boolean
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg1",
-    s"""|object Main {
-        |  assert(assertion = true, @@)
-        |}
-        |""".stripMargin,
-    """|message = : => Any
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg2",
-    s"""|object Main {
-        |  assert(true, @@)
-        |}
-        |""".stripMargin,
-    """|message = : => Any
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  def user: String =
-    """|case class User(
-       |    name: String = "John",
-       |    age: Int = 42,
-       |    address: String = "",
-       |    followers: Int = 0
-       |)
-       |""".stripMargin
-  check(
-    "arg3",
-    s"""|
-        |$user
-        |object Main {
-        |  User("", address = "", @@)
-        |}
-        |""".stripMargin,
-    """|age = : Int
-       |followers = : Int
-       |:: scala.collection.immutable
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg4",
-    s"""|
-        |$user
-        |object Main {
-        |  User("", @@, address = "")
-        |}
-        |""".stripMargin,
-    """|age = : Int
-       |followers = : Int
-       |:: scala.collection.immutable
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg5",
-    s"""|
-        |$user
-        |object Main {
-        |  User("", @@ address = "")
-        |}
-        |""".stripMargin,
-    """|address = : String
-       |followers = : Int
-       |:: scala.collection.immutable
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg6",
-    s"""|
-        |$user
-        |object Main {
-        |  User("", @@ "")
-        |}
-        |""".stripMargin,
-    """|address = : String
-       |age = : Int
-       |followers = : Int
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg7",
-    s"""|
-        |object Main {
-        |  Option[Int](@@)
-        |}
-        |""".stripMargin,
-    """|x = : A
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg8",
-    s"""|
-        |object Main {
-        |  "".stripSuffix(@@)
-        |}
-        |""".stripMargin,
-    """|suffix = : String
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg9",
-    // `until` has multiple implicit conversion alternatives
-    s"""|
-        |object Main {
-        |  1.until(@@)
-        |}
-        |""".stripMargin,
-    """|end = : Int
-       |:: scala.collection.immutable
-       |:+ scala.collection
-       |""".stripMargin,
-    topLines = Option(3)
-  )
-
-  check(
-    "arg10",
-    s"""|$user
-        |object Main {
-        |  User(addre@@)
-        |}
-        |""".stripMargin,
-    """|address = : String
-       |""".stripMargin
-  )
-
-  check(
-    "arg11",
-    s"""|object Main {
-        |  def curry(a: Int)(banana: Int): Int = ???
-        |  curry(1)(bana@@)
-        |}
-        |""".stripMargin,
-    """|banana = : Int
-       |""".stripMargin
-  )
-
-  check(
-    "arg12",
-    s"""|object Main {
-        |  def curry(a: Int)(banana: Int): Int = ???
-        |  curry(bana@@)
-        |}
-        |""".stripMargin,
-    ""
-  )
-
-  check(
-    "arg13",
-    s"""|object Main {
-        |  Array("")(evidence@@)
-        |}
-        |""".stripMargin,
-    // assert that `evidence$1` is excluded.
-    ""
   )
 
   check(
@@ -970,6 +791,18 @@ object CompletionSuite extends BaseCompletionSuite {
         |""".stripMargin,
     // assert that `_root_` is not a completion item.
     ""
+  )
+
+  check(
+    "filterText",
+    s"""|object Main {
+        |  "".substring@@
+        |}
+        |""".stripMargin,
+    """substring(beginIndex: Int): String
+      |substring(beginIndex: Int, endIndex: Int): String
+      |""".stripMargin,
+    filterText = "substring"
   )
 
 }

@@ -34,14 +34,23 @@ class SignatureHelpProvider(val compiler: MetalsGlobal) {
       traverse(tree)
       last
     }
+    def isValidQualifier(qual: Tree): Boolean =
+      !qual.pos.includes(pos) && (qual match {
+        // Ignore synthetic TupleN constructors from tuple syntax.
+        case Select(ident @ Ident(TermName("scala")), TermName(tuple))
+            if tuple.startsWith("Tuple") && ident.pos == qual.pos =>
+          false
+        case _ =>
+          true
+      })
     override def traverse(tree: Tree): Unit = {
       if (tree.pos.includes(pos)) {
         tree match {
-          case Apply(qual, _) if !qual.pos.includes(pos) =>
+          case Apply(qual, _) if isValidQualifier(qual) =>
             last = tree
-          case TypeApply(qual, _) if !qual.pos.includes(pos) =>
+          case TypeApply(qual, _) if isValidQualifier(qual) =>
             last = tree
-          case AppliedTypeTree(qual, _) if !qual.pos.includes(pos) =>
+          case AppliedTypeTree(qual, _) if isValidQualifier(qual) =>
             last = tree
           case _ =>
         }
@@ -83,17 +92,24 @@ class SignatureHelpProvider(val compiler: MetalsGlobal) {
       case termNames.unapply =>
         symbol.paramLists match {
           case (head :: Nil) :: Nil =>
-            symbol.info.resultType match {
+            symbol.info.finalResultType match {
               case TypeRef(
                   _,
                   definitions.OptionClass,
-                  TypeRef(_, tuple, args) :: Nil
-                  ) if definitions.isTupleSymbol(tuple) =>
+                  tpe @ TypeRef(_, tuple, args) :: Nil
+                  ) =>
                 val ctor = head.tpe.typeSymbol.primaryConstructor
                 val params = ctor.paramLists.headOption.getOrElse(Nil)
-                val isAlignedTypes = args.zip(params).forall {
-                  case (a, b) => a == b.tpe
+                val toZip = args match {
+                  case Nil => tpe
+                  case _ => args
                 }
+                val isAlignedTypes = toZip.lengthCompare(params.length) == 0 &&
+                  toZip.zip(params).forall {
+                    case (a, b) =>
+                      a == b.tpe ||
+                        b.tpe.typeSymbol.isTypeParameter
+                  }
                 if (isAlignedTypes) {
                   ctor.info
                 } else {
@@ -234,16 +250,6 @@ class SignatureHelpProvider(val compiler: MetalsGlobal) {
       }
     } else {
       None
-    }
-  }
-
-  // Extractor for both term and type applications like `foo(1)` and foo[T]`
-  object TreeApply {
-    def unapply(tree: Tree): Option[(Tree, List[Tree])] = tree match {
-      case TypeApply(qual, args) => Some(qual -> args)
-      case Apply(qual, args) => Some(qual -> args)
-      case UnApply(qual, args) => Some(qual -> args)
-      case _ => None
     }
   }
 
@@ -494,15 +500,18 @@ class SignatureHelpProvider(val compiler: MetalsGlobal) {
               val byNameLabel =
                 if (isByNamedOrdered) s"<$label>"
                 else label
-              val lparam =
-                new ParameterInformation(byNameLabel, docstring.toMarkupContent)
+              val lparam = new ParameterInformation(byNameLabel)
+              if (metalsConfig.isSignatureHelpDocumentationEnabled) {
+                lparam.setDocumentation(docstring.toMarkupContent)
+              }
               // TODO(olafur): use LSP 3.14.0 ParameterInformation.label offsets instead of strings
               // once this issue is fixed https://github.com/eclipse/lsp4j/issues/300
               if (isActiveSignature && t.activeArg.matches(param, i, j)) {
                 arg(i, j) match {
                   case Some(a) if a.tpe != null && !a.tpe.isErroneous =>
                     val tpe = metalsToLongString(a.tpe.widen, shortenedNames)
-                    if (!lparam.getLabel.endsWith(tpe)) {
+                    if (!lparam.getLabel.endsWith(tpe) &&
+                      metalsConfig.isSignatureHelpDocumentationEnabled) {
                       lparam.setDocumentation(
                         ("```scala\n" + tpe + "\n```\n" + docstring).toMarkupContent
                       )
@@ -516,13 +525,20 @@ class SignatureHelpProvider(val compiler: MetalsGlobal) {
         if (labels.isEmpty && sortedByName.nonEmpty) Nil
         else labels :: Nil
     }
-    new SignatureInformation(
+    val signatureInformation = new SignatureInformation(
       printer.methodSignature(
         paramLabels.iterator.map(_.iterator.map(_.getLabel))
-      ),
-      printer.methodDocstring.toMarkupContent,
+      )
+    )
+    if (metalsConfig.isSignatureHelpDocumentationEnabled) {
+      signatureInformation.setDocumentation(
+        printer.methodDocstring.toMarkupContent
+      )
+    }
+    signatureInformation.setParameters(
       paramLabels.iterator.flatten.toSeq.asJava
     )
+    signatureInformation
   }
 
 }

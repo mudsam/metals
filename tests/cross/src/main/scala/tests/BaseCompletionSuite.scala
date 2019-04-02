@@ -25,10 +25,13 @@ abstract class BaseCompletionSuite extends BasePCSuite {
     result
   }
 
-  def getItems(original: String): Seq[CompletionItem] = {
+  def getItems(
+      original: String,
+      filename: String = "A.scala"
+  ): Seq[CompletionItem] = {
     val (code, offset) = params(original)
     val result = resolvedCompletions(
-      CompilerOffsetParams("A.scala", code, offset, cancelToken)
+      CompilerOffsetParams(filename, code, offset, cancelToken)
     )
     result.getItems.asScala.sortBy(_.getSortText)
   }
@@ -43,15 +46,38 @@ abstract class BaseCompletionSuite extends BasePCSuite {
     }
   }
 
+  def checkEditLine(
+      name: String,
+      template: String,
+      original: String,
+      expected: String,
+      filterText: String = "",
+      assertSingleItem: Boolean = true,
+      filter: String => Boolean = _ => true,
+      command: Option[String] = None
+  )(implicit filename: sourcecode.File, line: sourcecode.Line): Unit = {
+    checkEdit(
+      name = name,
+      original = template.replaceAllLiterally("___", original),
+      expected = template.replaceAllLiterally("___", expected),
+      filterText = filterText,
+      assertSingleItem = assertSingleItem,
+      filter = filter,
+      command = command
+    )
+  }
   def checkEdit(
       name: String,
       original: String,
       expected: String,
       filterText: String = "",
-      assertSingleItem: Boolean = true
+      assertSingleItem: Boolean = true,
+      filter: String => Boolean = _ => true,
+      command: Option[String] = None
   )(implicit filename: sourcecode.File, line: sourcecode.Line): Unit = {
     test(name) {
-      val items = getItems(original)
+      val items = getItems(original).filter(item => filter(item.getLabel))
+      if (items.isEmpty) fail("obtained empty completions!")
       if (assertSingleItem && items.length != 1) {
         fail(
           s"expected single completion item, obtained ${items.length} items.\n${items}"
@@ -64,6 +90,11 @@ abstract class BaseCompletionSuite extends BasePCSuite {
       if (filterText.nonEmpty) {
         assertNoDiff(item.getFilterText, filterText, "Invalid filter text")
       }
+      assertNoDiff(
+        Option(item.getCommand).fold("")(_.getCommand),
+        command.getOrElse(""),
+        "Invalid command"
+      )
     }
   }
 
@@ -75,7 +106,11 @@ abstract class BaseCompletionSuite extends BasePCSuite {
     test(name) {
       val items = getItems(original)
       val obtained = items
-        .map(item => Option(item.getInsertText).getOrElse(item.getLabel))
+        .map { item =>
+          Option(item.getTextEdit)
+            .map(_.getNewText)
+            .getOrElse(item.getLabel)
+        }
         .mkString("\n")
       assertNoDiff(obtained, expected)
     }
@@ -92,11 +127,13 @@ abstract class BaseCompletionSuite extends BasePCSuite {
       stableOrder: Boolean = true,
       postAssert: () => Unit = () => (),
       topLines: Option[Int] = None,
-      filterText: String = ""
-  )(implicit filename: sourcecode.File, line: sourcecode.Line): Unit = {
+      filterText: String = "",
+      includeDetail: Boolean = true,
+      filename: String = "A.scala"
+  )(implicit file: sourcecode.File, line: sourcecode.Line): Unit = {
     test(name) {
       val out = new StringBuilder()
-      val baseItems = getItems(original)
+      val baseItems = getItems(original, filename)
       val items = topLines match {
         case Some(top) => baseItems.take(top)
         case None => baseItems
@@ -116,7 +153,13 @@ abstract class BaseCompletionSuite extends BasePCSuite {
         }
         out
           .append(label)
-          .append(item.getDetail)
+          .append(
+            if (includeDetail && !item.getLabel.contains(item.getDetail)) {
+              item.getDetail
+            } else {
+              ""
+            }
+          )
           .append(commitCharacter)
           .append("\n")
       }

@@ -1,14 +1,13 @@
 package tests
 
+import org.eclipse.lsp4j.CompletionList
 import scala.concurrent.Future
 
 abstract class BaseCompletionSlowSuite(name: String)
     extends BaseSlowSuite(name) {
 
-  def assertCompletion(
-      query: String,
-      expected: String,
-      project: Char = 'a'
+  def withCompletion(query: String, project: Char = 'a')(
+      fn: CompletionList => Unit
   )(implicit file: sourcecode.File, line: sourcecode.Line): Future[Unit] = {
     val filename = s"$project/src/main/scala/$project/${project.toUpper}.scala"
     val text = server
@@ -16,8 +15,20 @@ abstract class BaseCompletionSlowSuite(name: String)
       .replaceAllLiterally("// @@", query.replaceAllLiterally("@@", ""))
     for {
       _ <- server.didChange(filename)(_ => text)
-      completion <- server.completion(filename, query)
+      completion <- server.completionList(filename, query)
     } yield {
+      fn(completion)
+    }
+  }
+
+  def assertCompletion(
+      query: String,
+      expected: String,
+      project: Char = 'a',
+      includeDetail: Boolean = true
+  )(implicit file: sourcecode.File, line: sourcecode.Line): Future[Unit] = {
+    withCompletion(query, project) { list =>
+      val completion = server.formatCompletion(list, includeDetail)
       val obtained =
         if (isWindows) {
           // HACK(olafur) we don't have access to the JDK sources on Appveyor
@@ -60,29 +71,29 @@ abstract class BaseCompletionSlowSuite(name: String)
       _ <- assertCompletion(
         "Stream@@",
         """|Stream scala.collection.immutable
-           |java.util.stream.Stream java.util.stream
-           |java.util.stream.IntStream java.util.stream
-           |java.rmi.server.LogStream java.rmi.server
-           |java.util.stream.BaseStream java.util.stream
-           |java.util.stream.LongStream java.util.stream
-           |scala.collection.immutable.StreamView scala.collection.immutable
-           |java.io.InputStream java.io
-           |java.io.PrintStream java.io
-           |java.util.stream.DoubleStream java.util.stream
-           |java.io.OutputStream java.io
-           |scala.collection.immutable.Stream.StreamBuilder scala.collection.immutable.Stream
-           |java.util.logging.StreamHandler java.util.logging
-           |scala.collection.immutable.Stream.StreamCanBuildFrom scala.collection.immutable.Stream
+           |Stream - java.util.stream
+           |IntStream - java.util.stream
+           |LogStream - java.rmi.server
+           |BaseStream - java.util.stream
+           |LongStream - java.util.stream
+           |StreamView - scala.collection.immutable
+           |InputStream - java.io
+           |PrintStream - java.io
+           |DoubleStream - java.util.stream
+           |OutputStream - java.io
+           |StreamBuilder - scala.collection.immutable.Stream
+           |StreamHandler - java.util.logging
+           |StreamCanBuildFrom - scala.collection.immutable.Stream
            |""".stripMargin
       )
       _ <- assertCompletion(
         "TrieMap@@",
-        """|scala.collection.concurrent.TrieMap scala.collection.concurrent
-           |scala.collection.parallel.mutable.ParTrieMap scala.collection.parallel.mutable
-           |scala.collection.immutable.HashMap.HashTrieMap scala.collection.immutable.HashMap
-           |scala.collection.parallel.mutable.ParTrieMapCombiner scala.collection.parallel.mutable
-           |scala.collection.parallel.mutable.ParTrieMapSplitter scala.collection.parallel.mutable
-           |scala.collection.concurrent.TrieMapSerializationEnd scala.collection.concurrent
+        """|TrieMap - scala.collection.concurrent
+           |ParTrieMap - scala.collection.parallel.mutable
+           |HashTrieMap - scala.collection.immutable.HashMap
+           |ParTrieMapCombiner - scala.collection.parallel.mutable
+           |ParTrieMapSplitter - scala.collection.parallel.mutable
+           |TrieMapSerializationEnd - scala.collection.concurrent
            |""".stripMargin
       )
       _ <- assertCompletion(
