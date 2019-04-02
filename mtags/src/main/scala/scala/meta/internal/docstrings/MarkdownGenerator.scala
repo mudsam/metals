@@ -98,12 +98,7 @@ object MarkdownGenerator {
       if (c.see.nonEmpty)
         "\n**See**\n" + c.see
           .map { body =>
-            // If we already have a link, just render it
-            // otherwise create a link from the given text
-            blocksToMarkdown(body.blocks).trim match {
-              case LinkPattern(text) => s"- $text"
-              case text => s"- [$text]($text)"
-            }
+            s"- ${blocksToMarkdown(body.blocks).trim}"
           }
           .mkString("", "\n", "\n")
       else ""
@@ -162,7 +157,7 @@ object MarkdownGenerator {
       case Bold(text) =>
         s"**${inlineToMarkdown(text)}**"
       case Link(target, title) =>
-        s"[$target](${inlineToMarkdown(title)})"
+        s"[${inlineToMarkdown(title)}]($target)"
       case _ =>
         ""
     }
