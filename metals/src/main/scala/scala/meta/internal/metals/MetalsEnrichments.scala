@@ -1,12 +1,9 @@
 package scala.meta.internal.metals
 
 import ch.epfl.scala.{bsp4j => b}
-import com.google.gson.Gson
-import com.google.gson.JsonElement
 import io.undertow.server.HttpServerExchange
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import scala.meta.internal.semanticdb.SymbolInformation.{Kind => k}
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,26 +13,31 @@ import java.util
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.eclipse.lsp4j.TextDocumentIdentifier
-import org.eclipse.lsp4j.jsonrpc.CancelChecker
 import org.eclipse.{lsp4j => l}
-import scala.collection.AbstractIterator
 import scala.collection.convert.DecorateAsJava
 import scala.collection.convert.DecorateAsScala
 import scala.compat.java8.FutureConverters
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.Promise
+import scala.meta.Tree
 import scala.meta.inputs.Input
 import scala.meta.internal.io.FileIO
-import scala.meta.internal.mtags.MtagsEnrichments._
+import scala.meta.internal.mtags.MtagsEnrichments
 import scala.meta.internal.semanticdb.Scala.Descriptor
 import scala.meta.internal.semanticdb.Scala.Symbols
+import scala.meta.internal.trees.Origin
 import scala.meta.internal.{semanticdb => s}
 import scala.meta.io.AbsolutePath
+import scala.meta.tokens.Token
 import scala.util.Properties
-import scala.util.control.NonFatal
 import scala.{meta => m}
+import java.nio.file.StandardOpenOption
 
 /**
  * One stop shop for all extension methods that are used in the metals build.
@@ -49,31 +51,17 @@ import scala.{meta => m}
  *
  * Includes the following converters from the standard library: {{{
  *  import scala.compat.java8.FutureConverters._
- *  import scala.collection.JavaConverters._
+ *  import scala.meta.internal.jdk.CollectionConverters._
  * }}}
  *
  * If this doesn't scale because we have too many unrelated extension methods
  * then we can split this up, but for now it's really convenient to have to
  * remember only one import.
  */
-object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
-
-  private def decodeJson[T](obj: AnyRef, cls: Class[T]): Option[T] =
-    for {
-      data <- Option(obj)
-      value <- try {
-        Some(
-          new Gson().fromJson[T](
-            data.asInstanceOf[JsonElement],
-            cls
-          )
-        )
-      } catch {
-        case NonFatal(e) =>
-          scribe.error(s"decode error: $cls", e)
-          None
-      }
-    } yield value
+object MetalsEnrichments
+    extends DecorateAsJava
+    with DecorateAsScala
+    with MtagsEnrichments {
 
   implicit class XtensionBuildTarget(buildTarget: b.BuildTarget) {
     def asScalaBuildTarget: Option[b.ScalaBuildTarget] = {
@@ -90,6 +78,11 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
     def asCompileReport: Option[b.CompileReport] = {
       decodeJson(task.getData, classOf[b.CompileReport])
     }
+  }
+
+  implicit class XtensionCompileResult(result: b.CompileResult) {
+    def isOK: Boolean = result.getStatusCode == b.StatusCode.OK
+    def isError: Boolean = result.getStatusCode == b.StatusCode.ERROR
   }
 
   implicit class XtensionEditDistance(result: Either[EmptyResult, m.Position]) {
@@ -159,6 +152,23 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
           throw e
       }
     }
+
+    def withTimeout(length: Int, unit: TimeUnit)(
+        implicit ec: ExecutionContext
+    ): Future[A] = {
+      Future(Await.result(future, FiniteDuration(length, unit)))
+    }
+
+    def onTimeout(length: Int, unit: TimeUnit)(
+        action: => Unit
+    )(implicit ec: ExecutionContext): Future[A] = {
+      // schedule action to execute on timeout
+      future.withTimeout(length, unit).recoverWith {
+        case e: TimeoutException =>
+          action
+          Future.failed(e)
+      }
+    }
   }
 
   implicit class XtensionJavaList[A](lst: util.List[A]) {
@@ -172,19 +182,14 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
     }
   }
 
-  implicit class XtensionPositionLsp(pos: m.Position) {
-    def toSemanticdb: s.Range = {
-      new s.Range(
-        pos.startLine,
-        pos.startColumn,
-        pos.endLine,
-        pos.endColumn
-      )
-    }
-    def toLSP: l.Range = {
-      new l.Range(
-        new l.Position(pos.startLine, pos.startColumn),
-        new l.Position(pos.endLine, pos.endColumn)
+  implicit class XtensionPositionLspInverse(pos: l.Position) {
+    def toMeta(input: m.Input): m.Position = {
+      m.Position.Range(
+        input,
+        pos.getLine,
+        pos.getCharacter,
+        pos.getLine,
+        pos.getCharacter
       )
     }
   }
@@ -291,16 +296,6 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
       filename.endsWith(".jar")
     }
 
-    def isSbtRelated(workspace: AbsolutePath): Boolean = {
-      val isToplevel = Set(workspace.toNIO, workspace.toNIO.resolve("project"))
-      isToplevel(path.toNIO.getParent) && {
-        val filename = path.toNIO.getFileName.toString
-        filename.endsWith("build.properties") ||
-        filename.endsWith(".sbt") ||
-        filename.endsWith(".scala")
-      }
-    }
-
     /**
      * Reads file contents from editor buffer with fallback to disk.
      */
@@ -311,12 +306,22 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
       }
     }
 
-    def dealias: AbsolutePath =
-      if (Files.isSymbolicLink(path.toNIO)) {
-        AbsolutePath(Files.readSymbolicLink(path.toNIO))
+    // Using [[Files.isSymbolicLink]] is not enough.
+    // It will be false when one of the parents is a symlink (e.g. /dir/link/file.txt)
+    def dealias: AbsolutePath = {
+      if (path.exists) { // cannot dealias non-existing path
+        AbsolutePath(path.toNIO.toRealPath())
       } else {
         path
       }
+    }
+
+    def touch(): Unit = {
+      if (!path.exists) {
+        path.parent.createDirectories()
+        Files.createFile(path.toNIO)
+      }
+    }
 
     def createDirectories(): AbsolutePath = {
       AbsolutePath(Files.createDirectories(dealias.toNIO))
@@ -326,9 +331,23 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
       Files.delete(dealias.toNIO)
     }
 
+    def writeText(text: String): Unit = {
+      path.parent.createDirectories()
+      Files.write(path.toNIO, text.getBytes(StandardCharsets.UTF_8))
+    }
+
+    def appendText(text: String): Unit = {
+      path.parent.createDirectories()
+      Files.write(
+        path.toNIO,
+        text.getBytes(StandardCharsets.UTF_8),
+        StandardOpenOption.APPEND
+      )
+    }
+
   }
 
-  implicit class XtensionStringUriProtocol(value: String) {
+  implicit class XtensionString(value: String) {
 
     /** Returns true if this is a Scala.js or Scala Native target
      *
@@ -346,8 +365,20 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
       value.startsWith("-P:scalajs:")
     }
 
+    def lastIndexBetween(
+        char: Char,
+        lowerBound: Int = 0,
+        upperBound: Int = value.size
+    ) = {
+      var index = upperBound
+      while (index > lowerBound && value(index) != char) {
+        index -= 1
+      }
+      index
+    }
+
     def toAbsolutePath: AbsolutePath =
-      AbsolutePath(Paths.get(URI.create(value.stripPrefix("metals:"))))
+      AbsolutePath(Paths.get(URI.create(value.stripPrefix("metals:")))).dealias
   }
 
   implicit class XtensionTextDocumentSemanticdb(textDocument: s.TextDocument) {
@@ -401,46 +432,16 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
       new l.Range(range.getStart.toLSP, range.getEnd.toLSP)
   }
 
-  implicit class XtensionLspRange(range: l.Range) {
-    def isOffset: Boolean =
-      range.getStart == range.getEnd
-    def toMeta(input: m.Input): m.Position =
-      m.Position.Range(
-        input,
-        range.getStart.getLine,
-        range.getStart.getCharacter,
-        range.getEnd.getLine,
-        range.getEnd.getCharacter
-      )
-  }
-  implicit class XtensionRangeBuildProtocol(range: s.Range) {
-    def toLocation(uri: String): l.Location = {
-      new l.Location(uri, range.toLSP)
-    }
-    def toLSP: l.Range = {
-      val start = new l.Position(range.startLine, range.startCharacter)
-      val end = new l.Position(range.endLine, range.endCharacter)
-      new l.Range(start, end)
-    }
-    def encloses(other: l.Position): Boolean = {
-      range.startLine <= other.getLine &&
-      range.endLine >= other.getLine &&
-      range.startCharacter <= other.getCharacter &&
-      range.endCharacter > other.getCharacter
-    }
-    def encloses(other: l.Range): Boolean = {
-      encloses(other.getStart) &&
-      encloses(other.getEnd)
-    }
-  }
-
   implicit class XtensionSymbolOccurrenceProtocol(occ: s.SymbolOccurrence) {
     def toLocation(uri: String): l.Location = {
       occ.range.getOrElse(s.Range(0, 0, 0, 0)).toLocation(uri)
     }
-    def encloses(pos: l.Position): Boolean =
+    def encloses(
+        pos: l.Position,
+        includeLastCharacter: Boolean = false
+    ): Boolean =
       occ.range.isDefined &&
-        occ.range.get.encloses(pos)
+        occ.range.get.encloses(pos, includeLastCharacter)
   }
 
   implicit class XtensionDiagnosticBsp(diag: b.Diagnostic) {
@@ -514,48 +515,36 @@ object MetalsEnrichments extends DecorateAsJava with DecorateAsScala {
     def cancel(): Unit =
       promise.tryFailure(new CancellationException())
   }
-  implicit class XtensionCancelChecker(token: CancelChecker) {
-    def isCancelled: Boolean =
-      try {
-        token.checkCanceled()
-        false
-      } catch {
-        case _: CancellationException =>
-          true
-      }
-  }
 
-  implicit class XtensionSymbolInformation(kind: s.SymbolInformation.Kind) {
-    def toLSP: l.SymbolKind = kind match {
-      case k.LOCAL => l.SymbolKind.Variable
-      case k.FIELD => l.SymbolKind.Field
-      case k.METHOD => l.SymbolKind.Method
-      case k.CONSTRUCTOR => l.SymbolKind.Constructor
-      case k.MACRO => l.SymbolKind.Method
-      case k.TYPE => l.SymbolKind.Class
-      case k.PARAMETER => l.SymbolKind.Variable
-      case k.SELF_PARAMETER => l.SymbolKind.Variable
-      case k.TYPE_PARAMETER => l.SymbolKind.TypeParameter
-      case k.OBJECT => l.SymbolKind.Object
-      case k.PACKAGE => l.SymbolKind.Module
-      case k.PACKAGE_OBJECT => l.SymbolKind.Module
-      case k.CLASS => l.SymbolKind.Class
-      case k.TRAIT => l.SymbolKind.Interface
-      case k.INTERFACE => l.SymbolKind.Interface
-      case _ => l.SymbolKind.Class
+  implicit class XtensionToken(token: Token) {
+    def isWhiteSpaceOrComment = token match {
+      case _: Token.Space | _: Token.Tab | _: Token.CR | _: Token.LF |
+          _: Token.LFLF | _: Token.FF | _: Token.Comment | _: Token.BOF |
+          _: Token.EOF =>
+        true
+      case _ => false
     }
   }
 
-  implicit class XtensionJavaPriorityQueue[A](q: util.PriorityQueue[A]) {
-
-    /**
-     * Returns iterator that consumes the priority queue in-order using `poll()`.
-     */
-    def pollingIterator: Iterator[A] = new AbstractIterator[A] {
-      override def hasNext: Boolean = !q.isEmpty
-      override def next(): A = q.poll()
+  implicit class XtensionTreeTokenStream(tree: Tree) {
+    def leadingTokens: Iterator[Token] = tree.origin match {
+      case Origin.Parsed(input, _, pos) =>
+        val tokens = input.tokenize.get
+        tokens.slice(0, pos.start - 1).reverseIterator
+      case _ => Iterator.empty
     }
 
-  }
+    def trailingTokens: Iterator[Token] = tree.origin match {
+      case Origin.Parsed(input, _, pos) =>
+        val tokens = input.tokenize.get
+        tokens.slice(pos.end + 1, tokens.length).iterator
+      case _ => Iterator.empty
+    }
 
+    def findFirstLeading(predicate: Token => Boolean): Option[Token] =
+      leadingTokens.find(predicate)
+
+    def findFirstTrailing(predicate: Token => Boolean): Option[Token] =
+      trailingTokens.find(predicate)
+  }
 }

@@ -4,13 +4,9 @@ title: Emacs
 ---
 
 Metals works in Emacs thanks to the the
-[`lsp-scala`](https://github.com/rossabaker/lsp-scala) package.
+[`lsp-mode`](https://github.com/emacs-lsp/lsp-mode) package.
 
 ![Emacs demo](https://i.imgur.com/KJQLMZ7.gif)
-
-> The Emacs LSP client has [several known issues](#known-issues). Most
-> critically, diagnostics are not published for unopened buffers meaning compile
-> errors can get lost.
 
 ```scala mdoc:requirements
 
@@ -18,12 +14,23 @@ Metals works in Emacs thanks to the the
 
 ## Installation
 
-To use Metals in Emacs, place this snippet in your Emacs configuration to load
-`lsp-scala` along with its dependencies:
+To use Metals in Emacs, place this snippet in your Emacs configuration (for example .emacs.d/init.el) to load
+`lsp-mode` along with its dependencies:
 
 ```el
+(require 'package)
+
 ;; Add melpa to your packages repositories
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+
+(package-initialize)
+
+;; Install use-package if not already installed
+(unless (package-installed-p 'use-package)
+  (package-refresh-contents)
+  (package-install 'use-package))
+
+(require 'use-package)
 
 ;; Enable defer and ensure by default for use-package
 (setq use-package-always-defer t
@@ -47,16 +54,15 @@ To use Metals in Emacs, place this snippet in your Emacs configuration to load
 (use-package flycheck
   :init (global-flycheck-mode))
 
-(use-package lsp-mode)
+(use-package lsp-mode
+  ;; Optional - enable lsp-mode automatically in scala files
+  :hook (scala-mode . lsp)
+  :config (setq lsp-prefer-flymake nil))
 
-(use-package lsp-ui
-  :hook (lsp-mode . lsp-ui-mode))
+(use-package lsp-ui)
 
-(use-package lsp-scala
-  :after scala-mode
-  :demand t
-  ;; Optional - enable lsp-scala automatically in scala files
-  :hook (scala-mode . lsp))
+;; Add company-lsp backend for metals
+(use-package company-lsp)
 ```
 
 > You may need to disable other packages like `ensime` or sbt server to prevent
@@ -78,52 +84,37 @@ usage with Emacs.
 
 ## Manually trigger build import
 
-To manually trigger a build import, run `M-x lsp-scala-build-import`.
+To manually trigger a build import, run `M-x lsp-metals-build-import`.
 
 ![Import build command](https://i.imgur.com/SvGXJDK.png)
 
 ## Run doctor
 
-Run `M-x lsp-scala-doctor-run` to troubleshoot potential configuration problems
+Run `M-x lsp-metals-doctor-run` to troubleshoot potential configuration problems
 in your build.
 
 ![Run doctor command](https://i.imgur.com/yelm0jd.png)
 
-## Known issues
-
-- `lsp-mode` blocks the UI during the `initialize` handshake so you may notice
-  that opening `*.scala` file gets slower. Metals does as much as possible to
-  move computation out of `initialize` but `lsp-mode` should ideally not freeze
-  the UI during any LSP request/response cycle.
-- `lsp-mode` does not publish diagnostics for unopened buffers so you only see
-  compile errors for the open file.
-- `lsp-mode` does not send a `shutdown` request and `exit` notification when
-  closing Emacs meaning Metals can't properly clean up resources.
-- `lsp-mode` does not respect the Metals server capabilities that are declared
-  during the initialize handshake. The following warnings can be ignored in the
-  logs:
-  - `textDocument/hover is not supported`
-  - `textDocument/documentSymbol is not supported`
-- `lsp-mode` executes `workspace/executeCommand` commands within a specific
-  timeout so long-running commands like "Import build" cause the following error
-  to be reported in the logs:
-  `lsp--send-wait: Timed out while waiting for a response from the language server`.
-  Feel free to ignore this error.
-- `flycheck` does not explicitly support Windows so diagnostics may not report
-  correctly on Windows:
-  http://www.flycheck.org/en/latest/user/installation.html#windows-support
-
 ### eglot
 
 There is an alternative LSP client called
-[eglot](https://github.com/joaotavora/eglot) that might be worth trying out to
-see if it addresses the issues of lsp-mode.
+[eglot](https://github.com/joaotavora/eglot) that might be worth trying out if
+you want to use an alternative to lsp-mode.
 
 To configure Eglot with Metals:
 
 ```el
+(require 'package)
+
 ;; Add melpa-stable to your packages repositories
 (add-to-list 'package-archives '("melpa-stable" . "https://stable.melpa.org/packages/") t)
+
+;; Install use-package if not already installed
+(unless (package-installed-p 'use-package)
+  (package-refresh-contents)
+  (package-install 'use-package))
+
+(require 'use-package)
 
 ;; Enable defer and ensure by default for use-package
 (setq use-package-always-defer t
@@ -131,7 +122,7 @@ To configure Eglot with Metals:
 
 ;; Enable scala-mode and sbt-mode
 (use-package scala-mode
-  :mode "\\.s\\(cala\\|bt\\)$")
+  :mode "^\w+\\.s\\(cala\\|bt\\)$")
 
 (use-package sbt-mode
   :commands sbt-start sbt-command

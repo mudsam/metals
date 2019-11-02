@@ -3,6 +3,9 @@ package tests
 import com.geirsson.coursiersmall.CoursierSmall
 import com.geirsson.coursiersmall.Dependency
 import com.geirsson.coursiersmall.Settings
+import scala.meta.internal.metals.JdkSources
+import scala.meta.internal.metals.PackageIndex
+import scala.meta.internal.mtags
 import scala.meta.io.AbsolutePath
 import scala.meta.io.Classpath
 
@@ -13,6 +16,14 @@ case class Library(
 )
 
 object Library {
+  def jdk: Library =
+    Library(
+      "JDK",
+      Classpath(PackageIndex.bootClasspath),
+      Classpath(JdkSources().get :: Nil)
+    )
+  def cats: Seq[AbsolutePath] =
+    fetch("org.typelevel", "cats-core_2.12", "2.0.0-M4")
   def all: List[Library] = {
     val settings = new Settings()
       .withDependencies(
@@ -20,12 +31,32 @@ object Library {
           new Dependency(
             "org.scalameta",
             "scalameta_2.12",
-            "4.1.0"
+            "4.1.4"
+          ),
+          new Dependency(
+            "com.lihaoyi",
+            "scalaparse_2.12",
+            "2.1.0"
+          ),
+          new Dependency(
+            "com.lihaoyi",
+            "acyclic_2.12",
+            "0.1.8"
           ),
           new Dependency(
             "com.typesafe.akka",
             "akka-testkit_2.12",
-            "2.5.9"
+            "2.5.19"
+          ),
+          new Dependency(
+            "com.typesafe.akka",
+            "akka-stream_2.12",
+            "2.5.19"
+          ),
+          new Dependency(
+            "com.typesafe.akka",
+            "akka-cluster_2.12",
+            "2.5.19"
           ),
           new Dependency(
             "org.apache.spark",
@@ -53,6 +84,11 @@ object Library {
             "1.10.0"
           ),
           new Dependency(
+            "org.scala-lang",
+            "scala-compiler",
+            mtags.BuildInfo.scalaCompilerVersion
+          ),
+          new Dependency(
             "io.buoyant",
             "linkerd-core_2.12",
             "1.4.3"
@@ -71,4 +107,13 @@ object Library {
       )
     )
   }
+
+  def fetch(org: String, artifact: String, version: String): Seq[AbsolutePath] =
+    CoursierSmall
+      .fetch(
+        new Settings().withDependencies(
+          List(new Dependency(org, artifact, version).withTransitive(false))
+        )
+      )
+      .map(AbsolutePath(_))
 }

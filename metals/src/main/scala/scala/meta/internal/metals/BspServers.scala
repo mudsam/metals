@@ -5,12 +5,10 @@ import com.google.gson.Gson
 import io.github.soc.directories.ProjectDirectories
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
 import java.security.MessageDigest
 import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Future
 import scala.meta.internal.io.FileIO
-import scala.meta.internal.io.PathIO
 import scala.meta.internal.metals.Messages.BspSwitch
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.mtags.MD5
@@ -125,11 +123,9 @@ final class BspServers(
   private def findJsonFiles(): List[AbsolutePath] = {
     val buf = List.newBuilder[AbsolutePath]
     def visit(dir: AbsolutePath): Unit =
-      if (dir.isDirectory) {
-        Files.list(dir.toNIO).iterator().asScala.foreach { p =>
-          if (PathIO.extension(p) == "json") {
-            buf += AbsolutePath(p)
-          }
+      dir.list.foreach { p =>
+        if (p.extension == "json") {
+          buf += p
         }
       }
     visit(workspace.resolve(".bsp"))

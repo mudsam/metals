@@ -5,9 +5,9 @@ import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.MessageType
 import org.eclipse.lsp4j.ShowMessageRequestParams
-import scala.collection.JavaConverters._
+import scala.meta.internal.jdk.CollectionConverters._
 import scala.collection.mutable
-import scala.meta.internal.metals.BuildTool.Sbt
+import scala.meta.internal.builds.BuildTool
 import scala.meta.io.AbsolutePath
 
 /**
@@ -16,7 +16,6 @@ import scala.meta.io.AbsolutePath
 object Messages extends Messages(Icons.vscode)
 
 class Messages(icons: Icons) {
-  val BloopInstallProgress = MetalsSlowTaskParams("sbt bloopInstall")
   val ImportProjectFailed = new MessageParams(
     MessageType.Error,
     "Import project failed, no functionality will work. See the logs for more details"
@@ -27,6 +26,8 @@ class Messages(icons: Icons) {
       "See the logs for more details. "
   )
 
+  def bloopInstallProgress(buildToolExecName: String) =
+    MetalsSlowTaskParams(s"$buildToolExecName bloopInstall")
   def dontShowAgain: MessageActionItem =
     new MessageActionItem("Don't show again")
   def notNow: MessageActionItem =
@@ -34,9 +35,9 @@ class Messages(icons: Icons) {
   object ImportBuildChanges {
     def yes: MessageActionItem =
       new MessageActionItem("Import changes")
-    def params: ShowMessageRequestParams = {
+    def params(buildToolName: String): ShowMessageRequestParams = {
       val params = new ShowMessageRequestParams()
-      params.setMessage("sbt build needs to be re-imported")
+      params.setMessage(s"$buildToolName build needs to be re-imported")
       params.setType(MessageType.Info)
       params.setActions(
         List(
@@ -51,10 +52,10 @@ class Messages(icons: Icons) {
 
   object ImportBuild {
     def yes = new MessageActionItem("Import build")
-    def params: ShowMessageRequestParams = {
+    def params(buildToolName: String): ShowMessageRequestParams = {
       val params = new ShowMessageRequestParams()
       params.setMessage(
-        "New sbt workspace detected, would you like to import the build?"
+        s"New $buildToolName workspace detected, would you like to import the build?"
       )
       params.setType(MessageType.Info)
       params.setActions(
@@ -112,49 +113,24 @@ class Messages(icons: Icons) {
     }
   }
 
-  object IncompatibleSbtVersion {
-    def toFixMessage =
-      "To fix this problem, upgrade to sbt v0.13.17+"
+  object IncompatibleBuildToolVersion {
+
     def dismissForever: MessageActionItem =
       new MessageActionItem("Don't show again")
     def learnMore: MessageActionItem =
       new MessageActionItem("Learn more")
     def learnMoreUrl: String = Urls.docs("import-build")
-    def params(sbt: Sbt): ShowMessageRequestParams = {
+    def params(tool: BuildTool): ShowMessageRequestParams = {
+      def toFixMessage =
+        s"To fix this problem, upgrade to $tool ${tool.recommendedVersion} "
       val params = new ShowMessageRequestParams()
       params.setMessage(
-        s"Automatic build import is not supported for sbt ${sbt.version}. $toFixMessage"
+        s"Automatic build import is not supported for $tool ${tool.version}. $toFixMessage"
       )
       params.setType(MessageType.Warning)
       params.setActions(
         List(
           learnMore,
-          dismissForever
-        ).asJava
-      )
-      params
-    }
-  }
-
-  object Only212Navigation {
-    def statusBar(scalaVersion: String) =
-      MetalsStatusParams(
-        "$(alert) No navigation",
-        tooltip = params(scalaVersion).getMessage
-      )
-    def dismissForever: MessageActionItem =
-      new MessageActionItem("Don't show again")
-    def ok: MessageActionItem =
-      new MessageActionItem("Ok")
-    def params(scalaVersion: String): ShowMessageRequestParams = {
-      val params = new ShowMessageRequestParams()
-      params.setMessage(
-        s"Navigation for external library sources is not supported in Scala $scalaVersion."
-      )
-      params.setType(MessageType.Warning)
-      params.setActions(
-        List(
-          ok,
           dismissForever
         ).asJava
       )
@@ -289,6 +265,42 @@ class Messages(icons: Icons) {
         ).asJava
       )
       params
+    }
+  }
+
+  object WorkspaceSymbolDependencies {
+    def title: String =
+      "Add ';' to search library dependencies"
+    def detail: String =
+      """|The workspace/symbol feature ("Go to symbol in workspace") allows you to search for
+         |classes, traits and objects that are defined in your workspace as well as library dependencies.
+         |
+         |By default, a query searches only for symbols defined in this workspace. Include a semicolon
+         |character `;` in the query to search for symbols in library dependencies.
+         |
+         |Examples:
+         |- "Future": workspace only
+         |- "Future;": workspace + library dependencies
+         |- ";Future": workspace + library dependencies
+         |
+         |The library dependencies are automatically searched when no results are found in the workspace.
+         |""".stripMargin
+  }
+
+  object DeprecatedScalaVersion {
+    def message(
+        usingNow: Iterable[String],
+        shouldBeUsing: Iterable[String]
+    ): String = {
+      val using =
+        if (usingNow.size == 1)
+          s"a legacy Scala version ${usingNow.head}"
+        else usingNow.mkString("legacy Scala versions ", ", ", "")
+      val recommended =
+        if (shouldBeUsing.size == 1) shouldBeUsing.head
+        else shouldBeUsing.mkString(" and ")
+      s"You are using $using, which might not be supported in future versions of Metals. " +
+        s"Please upgrade to Scala $recommended."
     }
   }
 }

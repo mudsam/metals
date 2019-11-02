@@ -6,6 +6,7 @@ import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.ShowMessageRequestParams
+import scala.meta.internal.tvp._
 
 /**
  * A language client that ignores all requests.
@@ -13,7 +14,9 @@ import org.eclipse.lsp4j.ShowMessageRequestParams
  * Used during shutdown procedure to ensure no status bar updates
  * or log messages are published during shutdown.
  */
-object NoopLanguageClient extends MetalsLanguageClient {
+abstract class NoopLanguageClient extends MetalsLanguageClient {
+  override def configure(capabilities: ClientExperimentalCapabilities): Unit =
+    ()
   override def metalsStatus(params: MetalsStatusParams): Unit = ()
   override def metalsSlowTask(
       params: MetalsSlowTaskParams
@@ -35,4 +38,9 @@ object NoopLanguageClient extends MetalsLanguageClient {
   ): CompletableFuture[MetalsInputBoxResult] = {
     CompletableFuture.completedFuture(MetalsInputBoxResult(cancelled = true))
   }
+  override def metalsTreeViewDidChange(
+      params: TreeViewDidChangeParams
+  ): Unit = ()
 }
+
+object NoopLanguageClient extends NoopLanguageClient

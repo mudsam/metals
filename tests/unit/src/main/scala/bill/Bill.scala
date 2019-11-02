@@ -10,7 +10,6 @@ import java.io.File
 import java.io.PrintStream
 import java.io.PrintWriter
 import java.net.URI
-import java.net.URLClassLoader
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -25,7 +24,7 @@ import org.eclipse.lsp4j.jsonrpc.Launcher
 import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.Future
-import scala.meta.internal.metals.BuildInfo
+import scala.meta.internal.metals.{BuildInfo, MetalsLogger, RecursivelyDelete}
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.PositionSyntax._
 import scala.reflect.internal.util.BatchSourceFile
@@ -34,12 +33,11 @@ import scala.reflect.io.AbstractFile
 import scala.reflect.io.VirtualFile
 import scala.tools.nsc
 import scala.tools.nsc.reporters.StoreReporter
-import scala.util.Properties
 import scala.util.control.NonFatal
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
-import scala.meta.internal.metals.MetalsLogger
-import scala.meta.internal.metals.RecursivelyDelete
+import scala.meta.internal.mtags
+import scala.meta.internal.mtags.ClasspathLoader
 import scala.meta.io.AbsolutePath
 
 /**
@@ -49,7 +47,7 @@ import scala.meta.io.AbsolutePath
  * of interest to you:
  *
  * - server discovery installation of `.bsp/bill.json` files
- * - custom Scala compiler reporter to produce BSP diagnostics
+ * - custom Scala compiler reporter to produce BSP diagnostics.
  *
  * You can try bill by running the main method:
  *
@@ -73,6 +71,10 @@ object Bill {
     override def onConnectWithClient(server: BuildClient): Unit =
       client = server
     var workspace: Path = Paths.get(".").toAbsolutePath.normalize()
+    // Returns true if we're tracing shutdown requests, used for testing purposes.
+    def isShutdownTrace(): Boolean = {
+      Files.isRegularFile(workspace.resolve("shutdown-trace"))
+    }
     def src: Path = workspace.resolve("src")
     def scalaJars: util.List[String] =
       myClasspath
@@ -83,7 +85,7 @@ object Bill {
     val target: BuildTarget = {
       val scalaTarget = new ScalaBuildTarget(
         "org.scala-lang",
-        Properties.versionNumberString,
+        mtags.BuildInfo.scalaCompilerVersion,
         "2.12",
         ScalaPlatform.JVM,
         scalaJars
@@ -102,8 +104,8 @@ object Bill {
       result
     }
     val reporter = new StoreReporter
-    val out = AbsolutePath(workspace.resolve("out"))
-    Files.createDirectories(out.toNIO)
+    val out = AbsolutePath(workspace.resolve("out.jar"))
+    Files.createDirectories(out.toNIO.getParent())
     lazy val g = {
       val settings = new nsc.Settings()
       settings.classpath.value =
@@ -119,6 +121,9 @@ object Bill {
       Future {
         workspace = Paths.get(URI.create(params.getRootUri))
         MetalsLogger.setupLspLogger(AbsolutePath(workspace), true)
+        if (isShutdownTrace()) {
+          println("trace: initialize")
+        }
         val capabilities = new BuildServerCapabilities
         capabilities.setCompileProvider(new CompileProvider(languages))
         new InitializeBuildResult("Bill", "1.0", "2.0.0-M2", capabilities)
@@ -126,6 +131,13 @@ object Bill {
     }
     override def onBuildInitialized(): Unit = {}
     override def buildShutdown(): CompletableFuture[AnyRef] = {
+      if (isShutdownTrace()) {
+        // Artifically delay shutdown to test that running "Connect to build server"
+        // waits for the shutdown request to respond before initializing a new build
+        // server connection.
+        Thread.sleep(1000)
+        println("trace: shutdown")
+      }
       CompletableFuture.completedFuture(null)
     }
     override def onBuildExit(): Unit = {
@@ -147,7 +159,11 @@ object Bill {
             new SourcesItem(
               target.getId,
               List(
-                new SourceItem(src.toUri.toString, false)
+                new SourceItem(
+                  src.toUri.toString,
+                  SourceItemKind.DIRECTORY,
+                  false
+                )
               ).asJava
             )
           ).asJava
@@ -167,7 +183,7 @@ object Bill {
               new Dependency(
                 "org.scala-lang",
                 "scala-library",
-                Properties.versionNumberString
+                mtags.BuildInfo.scalaCompilerVersion
               )
             )
           )
@@ -313,10 +329,11 @@ object Bill {
     ): CompletableFuture[ScalaMainClassesResult] = ???
   }
 
-  def myClassLoader: URLClassLoader =
-    this.getClass.getClassLoader.asInstanceOf[URLClassLoader]
-  def myClasspath: Iterator[Path] =
-    myClassLoader.getURLs.iterator
+  def myClassLoader: ClassLoader =
+    this.getClass.getClassLoader
+  def myClasspath: Seq[Path] =
+    ClasspathLoader
+      .getURLs(myClassLoader)
       .map(url => Paths.get(url.toURI))
 
   def cwd: Path = Paths.get(System.getProperty("user.dir"))
@@ -357,7 +374,6 @@ object Bill {
         .create()
       server.client = launcher.getRemoteProxy
       val listening = launcher.startListening()
-      pprint.log("listening...")
       listening.get()
     } catch {
       case NonFatal(e) =>
@@ -414,7 +430,6 @@ object Bill {
   def handleCompile(wd: Path): Unit = {
     import scala.concurrent.ExecutionContext.Implicits.global
     import scala.meta.internal.metals.MetalsEnrichments._
-    import scala.meta.internal.mtags.MtagsEnrichments._
     val server = new Server()
     val client = new BuildClient {
       override def onBuildShowMessage(params: ShowMessageParams): Unit = ???

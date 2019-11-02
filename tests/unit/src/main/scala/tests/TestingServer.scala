@@ -1,26 +1,33 @@
 package tests
 
-import com.google.gson.JsonParser
 import java.io.IOException
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.util
 import java.util.Collections
 import java.util.concurrent.ScheduledExecutorService
+import ch.epfl.scala.{bsp4j => b}
 import org.eclipse.lsp4j.ClientCapabilities
-import scala.meta.internal.metals.PositionSyntax._
+import org.eclipse.lsp4j.CodeLensParams
+import org.eclipse.lsp4j.CompletionList
+import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.DocumentOnTypeFormattingParams
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.ExecuteCommandParams
+import org.eclipse.lsp4j.FoldingRangeCapabilities
+import org.eclipse.lsp4j.FoldingRangeRequestParams
 import org.eclipse.lsp4j.FormattingOptions
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializedParams
@@ -31,12 +38,13 @@ import org.eclipse.lsp4j.TextDocumentClientCapabilities
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
+import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceClientCapabilities
 import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.{lsp4j => l}
-import org.scalactic.source.Position
+import tests.MetalsTestEnrichments._
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -48,22 +56,30 @@ import scala.meta.internal.io.PathIO
 import scala.meta.internal.metals.Buffers
 import scala.meta.internal.metals.Debug
 import scala.meta.internal.metals.DidFocusResult
+import scala.meta.internal.metals.WindowStateDidChangeParams
 import scala.meta.internal.metals.Directories
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.MetalsLanguageServer
 import scala.meta.internal.metals.MetalsServerConfig
+import scala.meta.internal.metals.PositionSyntax._
 import scala.meta.internal.metals.ProgressTicks
 import scala.meta.internal.metals.Time
 import scala.meta.internal.metals.UserConfiguration
-import scala.meta.internal.mtags.MtagsEnrichments._
 import scala.meta.internal.mtags.Semanticdbs
 import scala.meta.internal.semanticdb.Scala.Symbols
 import scala.meta.internal.semanticdb.Scala._
 import scala.meta.internal.{semanticdb => s}
+import scala.meta.internal.tvp.TreeViewChildrenParams
 import scala.meta.io.AbsolutePath
 import scala.meta.io.RelativePath
 import scala.{meta => m}
-import tests.MetalsTestEnrichments._
+import scala.meta.internal.tvp.TreeViewProvider
+import org.eclipse.lsp4j.DocumentRangeFormattingParams
+import scala.concurrent.Promise
+import scala.meta.internal.metals.ClientExperimentalCapabilities
+import scala.meta.internal.metals.ServerCommands
+import scala.meta.internal.metals.debug.TestDebugger
+import scala.meta.internal.metals.DebugSession
 
 /**
  * Wrapper around `MetalsLanguageServer` with helpers methods for testing purpopses.
@@ -84,8 +100,10 @@ final class TestingServer(
     config: MetalsServerConfig,
     bspGlobalDirectories: List[AbsolutePath],
     sh: ScheduledExecutorService,
-    time: Time
+    time: Time,
+    experimentalCapabilities: Option[ClientExperimentalCapabilities]
 )(implicit ex: ExecutionContextExecutorService) {
+  import scala.meta.internal.metals.JsonParser._
   val server = new MetalsLanguageServer(
     ex,
     buffers = buffers,
@@ -111,22 +129,34 @@ final class TestingServer(
     FileLayout.fromString(layout, root = workspace)
   }
 
-  def workspaceSymbol(query: String, includeKind: Boolean = false): String = {
+  def workspaceSymbol(
+      query: String,
+      includeKind: Boolean = false,
+      includeFilename: Boolean = false
+  ): String = {
     val infos = server.workspaceSymbol(query)
     infos
       .map { info =>
         val kind =
           if (includeKind) s" ${info.getKind}"
           else ""
-        s"${info.getContainerName}${info.getName}$kind"
+        val filename =
+          if (includeFilename) {
+            val path = Paths.get(URI.create(info.getLocation().getUri()))
+            s" ${path.getFileName()}"
+          } else ""
+        val container = Option(info.getContainerName()).getOrElse("")
+        s"${container}${info.getName}$kind$filename"
       }
       .mkString("\n")
   }
   def workspaceSources: Seq[AbsolutePath] = {
     for {
-      sourceDirectory <- server.buildTargets.sourceDirectories.toSeq
-      if sourceDirectory.isDirectory
-      source <- FileIO.listAllFilesRecursively(sourceDirectory)
+      sourceItem <- server.buildTargets.sourceItems.toSeq
+      if sourceItem.exists
+      source <- if (sourceItem.isScalaOrJava)
+        Seq(sourceItem)
+      else FileIO.listAllFilesRecursively(sourceItem)
     } yield source
   }
 
@@ -143,7 +173,7 @@ final class TestingServer(
   }
   def assertReferenceDefinitionDiff(
       expectedDiff: String
-  )(implicit pos: Position): Unit = {
+  ): Unit = {
     DiffAssertions.assertNoDiffOrPrintObtained(
       workspaceReferences().diff,
       expectedDiff,
@@ -174,7 +204,7 @@ final class TestingServer(
       token <- input.tokenize.get
       if token.isIdentifier
       params = token.toPositionParams(identifier)
-      definition = server.definitionResult(params)
+      definition = server.definitionResult(params).asJava.get()
       if !definition.symbol.isPackage
       if !definition.definition.exists(_.isDependencySource(workspace))
       location <- definition.locations.asScala
@@ -201,7 +231,10 @@ final class TestingServer(
         l => newRef(ref.symbol, l)
       )
     }
-    WorkspaceSymbolReferences(references.result(), definition.result())
+    WorkspaceSymbolReferences(
+      references.result().distinct,
+      definition.result().distinct
+    )
   }
 
   def initialize(
@@ -216,11 +249,18 @@ final class TestingServer(
     val params = new InitializeParams
     val workspaceCapabilities = new WorkspaceClientCapabilities()
     val textDocumentCapabilities = new TextDocumentClientCapabilities
+    textDocumentCapabilities.setFoldingRange(new FoldingRangeCapabilities)
+    val experimental = experimentalCapabilities.getOrElse(
+      new ClientExperimentalCapabilities(
+        debuggingProvider = true,
+        treeViewProvider = true
+      )
+    )
     params.setCapabilities(
       new ClientCapabilities(
         workspaceCapabilities,
         textDocumentCapabilities,
-        null
+        experimental.toJson
       )
     )
     params.setWorkspaceFolders(
@@ -244,21 +284,39 @@ final class TestingServer(
     require(server.buildServer.isDefined, "Build server did not initialize")
   }
 
-  private def toPath(filename: String): AbsolutePath =
+  def toPath(filename: String): AbsolutePath =
     TestingServer.toPath(workspace, filename)
 
-  def executeCommand(command: String): Future[Unit] = {
+  def executeCommand(command: String, params: Object*): Future[Any] = {
     Debug.printEnclosing()
-    server
-      .executeCommand(
-        new ExecuteCommandParams(command, Collections.emptyList())
-      )
-      .asScala
-      .ignoreValue
+    scribe.info(s"Executing command [$command]")
+    val args: java.util.List[Object] =
+      params.map(_.toJson.asInstanceOf[Object]).asJava
+
+    server.executeCommand(new ExecuteCommandParams(command, args)).asScala
   }
+
+  def startDebugging(
+      a: String,
+      kind: String,
+      parameter: AnyRef
+  ): Future[TestDebugger] = {
+    val targets = List(new b.BuildTargetIdentifier(buildTarget(a)))
+    val params =
+      new b.DebugSessionParams(targets.asJava, kind, parameter.toJson)
+
+    executeCommand(ServerCommands.StartDebugAdapter.id, params)
+      .collect { case DebugSession(_, uri) => TestDebugger(URI.create(uri)) }
+  }
+
   def didFocus(filename: String): Future[DidFocusResult.Value] = {
     server.didFocus(toPath(filename).toURI.toString).asScala
   }
+
+  def windowStateDidChange(focused: Boolean): Unit = {
+    server.windowStateDidChange(WindowStateDidChangeParams(focused))
+  }
+
   def didSave(filename: String)(fn: String => String): Future[Unit] = {
     Debug.printEnclosing()
     val abspath = toPath(filename)
@@ -322,10 +380,322 @@ final class TestingServer(
   }
 
   def didChangeConfiguration(config: String): Future[Unit] = {
-    Future {
-      val wrapped = UserConfiguration.toWrappedJson(config)
-      val json = new JsonParser().parse(wrapped)
-      server.didChangeConfiguration(new DidChangeConfigurationParams(json))
+    val json = UserConfiguration.parse(config)
+    val params = new DidChangeConfigurationParams(json)
+    server.didChangeConfiguration(params).asScala
+  }
+
+  def completionList(
+      filename: String,
+      query: String
+  ): Future[CompletionList] = {
+    val path = toPath(filename)
+    val input = path.toInputFromBuffers(buffers)
+    val offset = query.indexOf("@@")
+    if (offset < 0) sys.error("missing @@")
+    val start = input.text.indexOf(query.replaceAllLiterally("@@", ""))
+    if (start < 0)
+      sys.error(s"missing query '$query' from text:\n${input.text}")
+    val point = start + offset
+    val pos = m.Position.Range(input, point, point)
+    val params =
+      new CompletionParams(path.toTextDocumentIdentifier, pos.toLSP.getStart)
+    server.completion(params).asScala
+  }
+
+  def foldingRange(filename: String): Future[String] = {
+    val path = toPath(filename)
+    val uri = path.toURI.toString
+    val params = new FoldingRangeRequestParams(new TextDocumentIdentifier(uri))
+    for {
+      ranges <- server.foldingRange(params).asScala
+      textEdits = FoldingRangesTextEdits(ranges)
+    } yield TextEdits.applyEdits(textContents(filename), textEdits)
+  }
+
+  def onTypeFormatting(
+      filename: String,
+      query: String,
+      expected: String,
+      autoIndent: String,
+      root: AbsolutePath = workspace
+  ): Future[Unit] = {
+    for {
+      (text, params) <- onTypeParams(filename, query, root, autoIndent)
+      multiline <- server.onTypeFormatting(params).asScala
+      format = TextEdits.applyEdits(
+        textContents(filename),
+        multiline.asScala.toList
+      )
+    } yield {
+      DiffAssertions.assertNoDiffOrPrintObtained(
+        format,
+        expected,
+        "obtained",
+        "expected"
+      )
+    }
+  }
+
+  def rangeFormatting(
+      filename: String,
+      query: String,
+      expected: String,
+      paste: String,
+      root: AbsolutePath = workspace
+  ): Future[Unit] = {
+    for {
+      (text, params) <- rangeFormattingParams(filename, query, paste, root)
+      multiline <- server.rangeFormatting(params).asScala
+      format = TextEdits.applyEdits(
+        textContents(filename),
+        multiline.asScala.toList
+      )
+    } yield {
+      DiffAssertions.assertNoDiffOrPrintObtained(
+        format,
+        expected,
+        "obtained",
+        "expected"
+      )
+    }
+  }
+
+  def codeLenses(filename: String)(maxRetries: Int): Future[String] = {
+    val path = toPath(filename)
+    val uri = path.toURI.toString
+    val params = new CodeLensParams(new TextDocumentIdentifier(uri))
+
+    // see https://github.com/scalacenter/bloop/issues/1067
+    // because bloop does not notify us when we can access the main/test classes,
+    // we have to try until we finally get them.
+    // Following handler runs on the refresh-model notification from the server
+    // (basically once the compilation finishes and classes are fetched)
+    // it retries the compilation until we finally can get desired lenses
+    // or fails if it could nat be achieved withing [[maxRetries]] number of tries
+    var retries = maxRetries
+    val codeLenses = Promise[List[l.CodeLens]]()
+    val handler = { () =>
+      for {
+        lenses <- server.codeLens(params).asScala.map(_.asScala)
+      } {
+        if (lenses.nonEmpty) codeLenses.trySuccess(lenses.toList)
+        else if (retries > 0) {
+          retries -= 1
+          server.compilations.compileFiles(List(path))
+        } else {
+          val error = s"Could not fetch any code lenses in $maxRetries tries"
+          codeLenses.tryFailure(new NoSuchElementException(error))
+        }
+      }
+    }
+
+    for {
+      _ <- server
+        .didFocus(uri)
+        .asScala // model is refreshed only for focused document
+      _ = client.refreshModelHandler = handler
+      // first compilation, to trigger the handler
+      _ <- server.compilations.compileFiles(List(path))
+      lenses <- codeLenses.future
+      textEdits = CodeLensesTextEdits(lenses)
+    } yield TextEdits.applyEdits(textContents(filename), textEdits)
+  }
+
+  def formatCompletion(
+      completion: CompletionList,
+      includeDetail: Boolean,
+      filter: String => Boolean = _ => true
+  ): String = {
+    val items =
+      completion.getItems.asScala
+        .map(item => server.completionItemResolve(item).get())
+    items.iterator
+      .filter(item => filter(item.getLabel()))
+      .map { item =>
+        val label = TestCompletions.getFullyQualifiedLabel(item)
+        val detail =
+          if (includeDetail && !label.contains(item.getDetail)) item.getDetail
+          else ""
+        label + detail
+      }
+      .mkString("\n")
+  }
+
+  private def positionFromString[T](
+      filename: String,
+      original: String,
+      root: AbsolutePath,
+      replaceWith: String = ""
+  )(
+      fn: (String, TextDocumentIdentifier, l.Position) => T
+  ): Future[T] = {
+    val offset = original.indexOf("@@")
+    if (offset < 0) sys.error(s"missing @@\n$original")
+    val text = original.replaceAllLiterally("@@", replaceWith)
+    val input = m.Input.String(text)
+    val path = root.resolve(filename)
+    path.touch()
+    val pos = m.Position.Range(input, offset, offset)
+    for {
+      _ <- didChange(filename)(_ => text)
+    } yield {
+      fn(
+        text,
+        path.toTextDocumentIdentifier,
+        pos.toLSP.getStart
+      )
+    }
+  }
+
+  private def offsetParams(
+      filename: String,
+      original: String,
+      root: AbsolutePath
+  ): Future[(String, TextDocumentPositionParams)] =
+    positionFromString(filename, original, root) {
+      case (text, textId, start) =>
+        (text, new TextDocumentPositionParams(textId, start))
+    }
+
+  private def onTypeParams(
+      filename: String,
+      original: String,
+      root: AbsolutePath,
+      autoIndent: String
+  ): Future[(String, DocumentOnTypeFormattingParams)] = {
+    positionFromString(
+      filename,
+      original,
+      root,
+      replaceWith = "\n" + autoIndent
+    ) {
+      case (text, textId, start) =>
+        start.setLine(start.getLine() + 1) // + newline
+        start.setCharacter(autoIndent.size)
+        val params = new DocumentOnTypeFormattingParams(start, "\n")
+        params.setTextDocument(textId)
+        (text, params)
+    }
+  }
+
+  private def rangeFormattingParams(
+      filename: String,
+      original: String,
+      paste: String,
+      root: AbsolutePath
+  ): Future[(String, DocumentRangeFormattingParams)] = {
+    positionFromString(filename, original, root, replaceWith = paste) {
+      case (text, textId, start) =>
+        val lines = paste.count(_ == '\n')
+        val char = paste.reverse.takeWhile(_ != '\n').size
+        val end = new l.Position(start.getLine() + lines, char)
+        val range = new l.Range(start, end)
+        val params = new DocumentRangeFormattingParams()
+        params.setRange(range)
+        params.setTextDocument(textId)
+        (text, params)
+    }
+  }
+
+  def assertHover(
+      filename: String,
+      query: String,
+      expected: String,
+      root: AbsolutePath = workspace
+  ): Future[Unit] = {
+    for {
+      hover <- hover(filename, query, root)
+    } yield {
+      DiffAssertions.assertNoDiffOrPrintObtained(
+        hover,
+        expected,
+        "obtained",
+        "expected"
+      )
+    }
+  }
+
+  def hover(
+      filename: String,
+      query: String,
+      root: AbsolutePath
+  ): Future[String] = {
+    for {
+      (text, params) <- offsetParams(filename, query, root)
+      hover <- server.hover(params).asScala
+    } yield TestHovers.renderAsString(text, Option(hover), includeRange = false)
+  }
+
+  def completion(filename: String, query: String): Future[String] = {
+    completionList(filename, query).map { c =>
+      formatCompletion(c, includeDetail = true)
+    }
+  }
+
+  def assertHighlight(
+      filename: String,
+      query: String,
+      expected: String,
+      root: AbsolutePath = workspace
+  ): Future[Unit] = {
+    for {
+      highlight <- highlight(filename, query, root)
+    } yield {
+      DiffAssertions.assertNoDiffOrPrintObtained(
+        highlight,
+        expected,
+        "obtained",
+        "expected"
+      )
+    }
+  }
+
+  def highlight(
+      filename: String,
+      query: String,
+      root: AbsolutePath
+  ): Future[String] = {
+    for {
+      (text, params) <- offsetParams(filename, query, root)
+      highlights <- server.documentHighlights(params).asScala
+    } yield {
+      TestRanges.renderHighlightsAsString(text, highlights.asScala.toList)
+    }
+  }
+
+  def assertImplementation(
+      filename: String,
+      query: String,
+      expected: Map[String, String],
+      base: Map[String, String]
+  ): Future[Unit] = {
+    for {
+      implementations <- implementation(filename, query, base)
+    } yield {
+      implementations.foreach {
+        case (file, obtained) =>
+          val expectedImpl = expected(file)
+          DiffAssertions.assertNoDiffOrPrintObtained(
+            obtained,
+            expectedImpl,
+            "obtained",
+            "expected"
+          )
+      }
+    }
+  }
+
+  def implementation(
+      filename: String,
+      query: String,
+      base: Map[String, String]
+  ): Future[Map[String, String]] = {
+    for {
+      (_, params) <- offsetParams(filename, query, workspace)
+      implementations <- server.implementation(params).asScala
+    } yield {
+      TestRanges.renderLocationsAsString(base, implementations.asScala.toList)
     }
   }
 
@@ -359,6 +729,7 @@ final class TestingServer(
         .mkString("\n")
     }
   }
+
   def formatting(filename: String): Future[Unit] = {
     val path = toPath(filename)
     server
@@ -398,9 +769,13 @@ final class TestingServer(
     val input = path.toInputFromBuffers(buffers)
     val identifier = path.toTextDocumentIdentifier
     val occurrences = ListBuffer.empty[s.SymbolOccurrence]
+    var last = List[String]()
     input.tokenize.get.foreach { token =>
       val params = token.toPositionParams(identifier)
-      val definition = server.definitionResult(params)
+      val definition = server
+        .definitionOrReferences(params, definitionOnly = true)
+        .asJava
+        .get()
       definition.definition.foreach { path =>
         if (path.isDependencySource(workspace)) {
           readonlySources(path.toNIO.getFileName.toString) = path
@@ -418,13 +793,15 @@ final class TestingServer(
           else s"$filename:${location.getRange.getStart.getLine}"
         }
       }
+      last = symbols
       val occurrence = if (token.isIdentifier) {
         if (definition.symbol.isPackage) None // ignore packages
         else if (symbols.isEmpty) Some("<no symbol>")
-        else Some(Symbols.Multi(symbols))
+        else Some(Symbols.Multi(symbols.sorted))
       } else {
         if (symbols.isEmpty) None // OK, expected
-        else Some(s"unexpected: ${Symbols.Multi(symbols)}")
+        else if (last == symbols) None //OK, expected
+        else Some(s"unexpected: ${Symbols.Multi(symbols.sorted)}")
       }
       occurrences ++= occurrence.map { symbol =>
         s.SymbolOccurrence(Some(token.pos.toSemanticdb), symbol)
@@ -468,9 +845,109 @@ final class TestingServer(
     Semanticdbs.printTextDocument(textDocument)
   }
 
+  def buildTarget(displayName: String): String = {
+    server.buildTargets.all
+      .find(_.info.getDisplayName() == displayName)
+      .map(_.info.getId().getUri())
+      .getOrElse {
+        val alternatives =
+          server.buildTargets.all.map(_.info.getDisplayName()).mkString(" ")
+        throw new NoSuchElementException(
+          s"$displayName (alternatives: ${alternatives}"
+        )
+      }
+  }
+
+  def jar(filename: String): String = {
+    server.buildTargets.allWorkspaceJars
+      .find(_.filename.contains(filename))
+      .map(_.toURI.toString())
+      .getOrElse {
+        val alternatives =
+          server.buildTargets.allWorkspaceJars.map(_.filename).mkString(" ")
+        throw new NoSuchElementException(
+          s"$filename (alternatives: ${alternatives}"
+        )
+      }
+  }
+
+  def treeViewReveal(
+      filename: String,
+      linePattern: String,
+      isIgnored: String => Boolean = _ => true
+  )(implicit sourcecodeLine: sourcecode.Line, file: sourcecode.File): String = {
+    val path = toPath(filename)
+    val line = path.toInput.value.lines.zipWithIndex
+      .collectFirst {
+        case (text, line) if text.contains(linePattern) =>
+          line
+      }
+      .getOrElse(
+        sys.error(s"$path: not found pattern '$linePattern'")
+      )
+    val reveal =
+      server.treeView.reveal(toPath(filename), new l.Position(line, 0)).get
+    val parents = (reveal.uriChain :+ null).map { uri =>
+      server.treeView.children(TreeViewChildrenParams(reveal.viewId, uri))
+    }
+    val label = parents.iterator
+      .flatMap { r =>
+        r.nodes.iterator.map { n =>
+          val icon = Option(n.icon) match {
+            case None => ""
+            case Some(value) => s" $value"
+          }
+          val label = n.label + icon
+          n.nodeUri -> label
+        }
+      }
+      .toMap
+      .updated("root", "root")
+    val tree = parents
+      .zip(reveal.uriChain :+ "root")
+      .foldLeft(PrettyPrintTree.empty) {
+        case (child, (parent, uri)) =>
+          PrettyPrintTree(
+            label(uri),
+            parent.nodes
+              .map(n => PrettyPrintTree(label(n.nodeUri)))
+              .filterNot(t => isIgnored(t.value))
+              .toList :+ child
+          )
+      }
+    tree.toString()
+  }
+
+  def assertTreeViewChildren(
+      uri: String,
+      expected: String
+  )(implicit line: sourcecode.Line, file: sourcecode.File): Unit = {
+    val viewId: String = TreeViewProvider.Build
+    val result =
+      server.treeView.children(TreeViewChildrenParams(viewId, uri)).nodes
+    val obtained = result
+      .map { node =>
+        val collapse =
+          if (node.isExpanded) " +"
+          else if (node.isCollapsed) " -"
+          else ""
+        val icon = Option(node.icon) match {
+          case None => ""
+          case Some(i) => " " + i
+        }
+        val libraryName =
+          node.label.replaceAll("-(\\d+\\.)+.*\\.jar", ".jar")
+        s"${libraryName}${icon}${collapse}"
+      }
+      .mkString("\n")
+    DiffAssertions.assertNoDiff(obtained, expected, "obtained", "expected")
+  }
+
   def textContents(filename: String): String =
     toPath(filename).toInputFromBuffers(buffers).text
-  def bufferContent(filename: String): String =
+  def textContentsOnDisk(filename: String): String =
+    toPath(filename).toInput.text
+  def bufferContents(filename: String): String =
     buffers
       .get(toPath(filename))
       .getOrElse(throw new NoSuchElementException(filename))
@@ -494,7 +971,10 @@ final class TestingServer(
             dir: Path,
             exc: IOException
         ): FileVisitResult = {
-          val isEmpty = !Files.list(dir).iterator().hasNext
+          val ls = Files.list(dir)
+          val isEmpty =
+            try !ls.iterator().hasNext
+            finally ls.close()
           if (isEmpty) {
             Files.delete(dir)
           }

@@ -1,18 +1,22 @@
 package scala.meta.internal.metals
 
+import java.{util => ju}
 import java.util.Collections
 import org.eclipse.lsp4j.TextDocumentPositionParams
+import org.eclipse.lsp4j.Location
+import scala.meta.pc.CancelToken
 import scala.meta.inputs.Input
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.mtags.GlobalSymbolIndex
 import scala.meta.internal.mtags.Mtags
-import scala.meta.internal.mtags.MtagsEnrichments._
 import scala.meta.internal.mtags.Semanticdbs
 import scala.meta.internal.mtags.Symbol
 import scala.meta.internal.mtags.SymbolDefinition
 import scala.meta.internal.semanticdb.Scala._
 import scala.meta.internal.semanticdb.TextDocument
 import scala.meta.io.AbsolutePath
+import scala.concurrent.Future
+import scala.concurrent.ExecutionContext
 
 /**
  * Implements goto definition that works even in code that doesn't parse.
@@ -37,22 +41,35 @@ final class DefinitionProvider(
     semanticdbs: Semanticdbs,
     icons: Icons,
     statusBar: StatusBar,
-    warnings: Warnings
-) {
+    warnings: Warnings,
+    compilers: () => Compilers
+)(implicit ec: ExecutionContext) {
 
   def definition(
       path: AbsolutePath,
-      params: TextDocumentPositionParams
-  ): DefinitionResult = {
-    val result = semanticdbs.textDocument(path)
-    result.documentIncludingStale match {
-      case Some(doc) =>
-        definitionFromSnapshot(path, params, doc)
-      case _ =>
-        warnings.noSemanticdb(path)
-        DefinitionResult.empty
+      params: TextDocumentPositionParams,
+      token: CancelToken
+  ): Future[DefinitionResult] = {
+    val fromSemanticdb =
+      semanticdbs.textDocument(path).documentIncludingStale match {
+        case Some(doc) =>
+          definitionFromSnapshot(path, params, doc)
+        case _ =>
+          warnings.noSemanticdb(path)
+          DefinitionResult.empty
+      }
+    if (fromSemanticdb.locations.isEmpty()) {
+      compilers().definition(params, token)
+    } else {
+      Future.successful(fromSemanticdb)
     }
   }
+
+  def fromSymbol(sym: String): ju.List[Location] =
+    DefinitionDestination.fromSymbol(sym).flatMap(_.toResult) match {
+      case None => ju.Collections.emptyList()
+      case Some(destination) => destination.locations
+    }
 
   def positionOccurrence(
       source: AbsolutePath,
@@ -70,8 +87,10 @@ final class DefinitionProvider(
     // Find matching symbol occurrence in SemanticDB snapshot
     val occurrence = for {
       queryPosition <- snapshotPosition.toPosition(dirtyPosition.getPosition)
-      occurrence <- snapshot.occurrences.find(_.encloses(queryPosition))
+      occurrence <- snapshot.occurrences
+        .find(_.encloses(queryPosition, true))
     } yield occurrence
+
     ResolvedSymbolOccurrence(sourceDistance, occurrence)
   }
 

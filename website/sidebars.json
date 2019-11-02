@@ -7,18 +7,24 @@
       "editors/vim",
       "editors/sublime",
       "editors/emacs",
-      "editors/new-editor"
+      "editors/eclipse"
     ],
     "Build Tools": [
       "build-tools/overview",
-      "build-tools/sbt",
       "build-tools/bloop",
-      "build-tools/new-build-tool"
+      "build-tools/gradle",
+      "build-tools/maven",
+      "build-tools/mill",
+      "build-tools/sbt"
     ],
     "Contributing": [
+      "build-tools/new-build-tool",
+      "editors/new-editor",
+      "editors/tree-view-protocol",
       "contributors/project-goals",
       "contributors/getting-started",
-      "contributors/updating-website"
+      "contributors/updating-website",
+      "contributors/releasing"
     ]
   }
 }

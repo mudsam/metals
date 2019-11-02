@@ -1,13 +1,19 @@
 package scala.meta.internal.metals
 
+import ch.epfl.scala.bsp4j.ScalaBuildTarget
+import ch.epfl.scala.bsp4j.ScalacOptionsItem
 import com.geirsson.coursiersmall
+import com.geirsson.coursiersmall.Dependency
+import com.geirsson.coursiersmall.Settings
 import java.net.URLClassLoader
-import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicBoolean
-import scala.concurrent.Promise
+import java.nio.file.Paths
+import java.util.ServiceLoader
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.Duration
-import scala.meta.io.AbsolutePath
-import scala.util.control.NonFatal
+import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.pc.ScalaPresentationCompiler
+import scala.meta.pc.PresentationCompiler
+import com.geirsson.coursiersmall.CoursierSmall
 
 /**
  * Wrapper around software that is embedded with Metals.
@@ -23,88 +29,98 @@ final class Embedded(
 ) extends Cancelable {
 
   override def cancel(): Unit = {
-    if (isBloopJars.get()) {
-      bloopJars.foreach(_.close())
+    presentationCompilers.clear()
+  }
+
+  private val presentationCompilers: TrieMap[String, URLClassLoader] =
+    TrieMap.empty
+  def presentationCompiler(
+      info: ScalaBuildTarget,
+      scalac: ScalacOptionsItem
+  ): PresentationCompiler = {
+    val classloader = presentationCompilers.getOrElseUpdate(
+      ScalaVersions.dropVendorSuffix(info.getScalaVersion),
+      statusBar.trackSlowTask("Downloading presentation compiler") {
+        Embedded.newPresentationCompilerClassLoader(info, scalac)
+      }
+    )
+    val services =
+      ServiceLoader.load(classOf[PresentationCompiler], classloader).iterator()
+    if (services.hasNext) services.next()
+    else {
+      // NOTE(olafur): ServiceLoader doesn't find the presentation compiler service
+      // on Appveyor for some reason, I'm unable to reproduce on my computer. Here below
+      // we fallback to manual classloading.
+      val cls =
+        classloader.loadClass(classOf[ScalaPresentationCompiler].getName)
+      val ctor = cls.getDeclaredConstructor()
+      ctor.setAccessible(true)
+      ctor.newInstance().asInstanceOf[PresentationCompiler]
     }
   }
-
-  /**
-   * Returns path to a local copy of sbt-launch.jar.
-   *
-   * We use embedded sbt-launch.jar instead of user `sbt` command because
-   * we can't rely on `sbt` resolving correctly when using system processes, at least
-   * it failed on Windows when I tried it.
-   */
-  lazy val embeddedSbtLauncher: AbsolutePath = {
-    val embeddedLauncher = this.getClass.getResourceAsStream("/sbt-launch.jar")
-    val out = Files.createTempDirectory("metals").resolve("sbt-launch.jar")
-    out.toFile.deleteOnExit()
-    Files.copy(embeddedLauncher, out)
-    AbsolutePath(out)
-  }
-
-  /**
-   * Fetches jars for bloop-frontend and creates a new orphan classloader.
-   */
-  val isBloopJars = new AtomicBoolean(false)
-  lazy val bloopJars: Option[URLClassLoader] = {
-    isBloopJars.set(true)
-    val promise = Promise[Unit]()
-    statusBar.trackFuture(s"${icons.sync}Downloading Bloop", promise.future)
-    try {
-      Some(Embedded.newBloopClassloader())
-    } catch {
-      case NonFatal(e) =>
-        scribe.error("Failed to classload bloop, compilation will not work", e)
-        None
-    } finally {
-      promise.trySuccess(())
-    }
-  }
-
-  /**
-   * Returns local path to a `bloop.py` script that we can call as `python bloop.py`.
-   *
-   * We don't `sys.process("bloop", ...)` directly because that requires bloop to be
-   * available on the PATH of the forked process and that didn't work while testing
-   * on Windows (even if `bloop` worked fine in the git bash).
-   */
-  lazy val bloopPy: AbsolutePath = {
-    val embeddedBloopClient = this.getClass.getResourceAsStream("/bloop.py")
-    val out = Files.createTempDirectory("metals").resolve("bloop.py")
-    out.toFile.deleteOnExit()
-    Files.copy(embeddedBloopClient, out)
-    AbsolutePath(out)
-  }
-
 }
 
 object Embedded {
-  private def newBloopClassloader(): URLClassLoader = {
-    val settings = new coursiersmall.Settings()
+  def downloadSettings(
+      dependency: Dependency,
+      scalaVersion: String
+  ): Settings =
+    new coursiersmall.Settings()
       .withTtl(Some(Duration.Inf))
-      .withDependencies(
-        List(
-          new coursiersmall.Dependency(
-            "ch.epfl.scala",
-            "bloop-frontend_2.12",
-            BuildInfo.bloopVersion
-          )
-        )
-      )
+      .withDependencies(List(dependency))
       .addRepositories(
         List(
           coursiersmall.Repository.SonatypeReleases,
-          new coursiersmall.Repository.Maven(
-            "https://dl.bintray.com/scalacenter/releases"
+          coursiersmall.Repository.SonatypeSnapshots
+        )
+      )
+      .withForceVersions(
+        List(
+          new Dependency(
+            "org.scala-lang",
+            "scala-library",
+            scalaVersion
+          ),
+          new Dependency(
+            "org.scala-lang",
+            "scala-compiler",
+            scalaVersion
+          ),
+          new Dependency(
+            "org.scala-lang",
+            "scala-reflect",
+            scalaVersion
           )
         )
       )
-    val jars = coursiersmall.CoursierSmall.fetch(settings)
-    // Don't make Bloop classloader a child or our classloader.
-    val parent: ClassLoader = null
-    val classloader =
-      new URLClassLoader(jars.iterator.map(_.toUri.toURL).toArray, parent)
-    classloader
+
+  def newPresentationCompilerClassLoader(
+      info: ScalaBuildTarget,
+      scalac: ScalacOptionsItem
+  ): URLClassLoader = {
+    val pc = new Dependency(
+      "org.scalameta",
+      s"mtags_${ScalaVersions.dropVendorSuffix(info.getScalaVersion)}",
+      BuildInfo.metalsVersion
+    )
+    val semanticdbJars = scalac.getOptions.asScala.collect {
+      case opt
+          if opt.startsWith("-Xplugin:") &&
+            opt.contains("semanticdb-scalac") &&
+            opt.contains(BuildInfo.semanticdbVersion) =>
+        Paths.get(opt.stripPrefix("-Xplugin:"))
+    }
+    val dependency =
+      if (semanticdbJars.isEmpty) pc
+      else pc.withTransitive(false)
+    val settings = downloadSettings(dependency, info.getScalaVersion())
+    val jars = CoursierSmall.fetch(settings)
+    val scalaJars = info.getJars.asScala.map(_.toAbsolutePath.toNIO)
+    val allJars = Iterator(jars, scalaJars, semanticdbJars).flatten
+    val allURLs = allJars.map(_.toUri.toURL).toArray
+    // Share classloader for a subset of types.
+    val parent =
+      new PresentationCompilerClassLoader(this.getClass.getClassLoader)
+    new URLClassLoader(allURLs, parent)
   }
 }

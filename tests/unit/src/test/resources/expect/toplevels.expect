@@ -1,3 +1,4 @@
+EmptyPackage.scala -> _empty_/EmptyPackage#
 example/AnonymousClasses.scala -> example/AnonymousClasses#
 example/Comments.scala -> example/Comments#
 example/Companion.scala -> example/Companion#
@@ -25,6 +26,7 @@ example/PatternMatching.scala -> example/PatternMatching#
 example/ReflectiveInvocation.scala -> example/ReflectiveInvocation#
 example/Scalalib.scala -> example/Scalalib#
 example/StructuralTypes.scala -> example/StructuralTypes.
+example/TryCatch.scala -> example/TryCatch#
 example/TypeParameters.scala -> example/TypeParameters#
 example/VarArgs.scala -> example/VarArgs#
 example/Vars.scala -> example/Vars.
@@ -32,6 +34,9 @@ example/nested/DoublePackage.scala -> example/nested/x/DoublePackage#
 example/nested/DoublePackage.scala -> example/nested2/y/DoublePackage#
 example/nested/ExampleNested.scala -> example/nested/ExampleNested#
 example/nested/LocalClass.scala -> example/nested/LocalClass#
+example/nested/LocalDeclarations.scala -> example/nested/Foo#
+example/nested/LocalDeclarations.scala -> example/nested/LocalDeclarations#
+example/nested/LocalDeclarations.scala -> example/nested/LocalDeclarations.
 example/nested/package.scala -> example/PackageObjectSibling#
 example/nested/package.scala -> example/nested/package.
 example/package.scala -> example/package.

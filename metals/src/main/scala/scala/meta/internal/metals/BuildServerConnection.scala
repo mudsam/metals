@@ -1,24 +1,25 @@
 package scala.meta.internal.metals
 
-import ch.epfl.scala.bsp4j.BuildClientCapabilities
-import ch.epfl.scala.bsp4j.CompileParams
-import ch.epfl.scala.bsp4j.CompileResult
-import ch.epfl.scala.bsp4j.InitializeBuildParams
-import ch.epfl.scala.bsp4j.InitializeBuildResult
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.URI
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+
+import ch.epfl.scala.bsp4j._
 import org.eclipse.lsp4j.jsonrpc.Launcher
+
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Future
-import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.pc.InterruptException
 import scala.meta.io.AbsolutePath
 import scala.util.Try
+import scala.collection.JavaConverters._
+import com.google.gson.Gson
 
 /**
  * An actively running and initialized BSP connection.
@@ -29,30 +30,65 @@ case class BuildServerConnection(
     server: MetalsBuildServer,
     cancelables: List[Cancelable],
     initializeResult: InitializeBuildResult,
-    name: String
+    name: String,
+    version: String
 )(implicit ec: ExecutionContext)
     extends Cancelable {
 
   private val ongoingRequests = new MutableCancelable().addAll(cancelables)
 
   /** Run build/shutdown procedure */
-  def shutdown(): Future[Unit] = {
-    for {
-      _ <- server.buildShutdown().asScala
-    } yield {
+  def shutdown(): Future[Unit] = Future {
+    try {
+      server.buildShutdown().get(2, TimeUnit.SECONDS)
       server.onBuildExit()
       // Cancel pending compilations on our side, this is not needed for Bloop.
       cancel()
+    } catch {
+      case e: TimeoutException =>
+        scribe.error(
+          s"timeout: build server '${initializeResult.getDisplayName}' during shutdown"
+        )
+      case InterruptException() =>
+      case e: Throwable =>
+        scribe.error(
+          s"build shutdown: ${initializeResult.getDisplayName()}",
+          e
+        )
     }
   }
 
   private def register[T](e: CompletableFuture[T]): CompletableFuture[T] = {
-    ongoingRequests.add(Cancelable(() => Try(e.cancel(true))))
+    ongoingRequests.add(
+      Cancelable(
+        () => Try(e.completeExceptionally(new InterruptedException()))
+      )
+    )
     e
   }
 
   def compile(params: CompileParams): CompletableFuture[CompileResult] = {
     register(server.buildTargetCompile(params))
+  }
+
+  def mainClasses(
+      params: ScalaMainClassesParams
+  ): CompletableFuture[ScalaMainClassesResult] = {
+    register(server.buildTargetScalaMainClasses(params))
+  }
+
+  def testClasses(
+      params: ScalaTestClassesParams
+  ): CompletableFuture[ScalaTestClassesResult] = {
+    register(server.buildTargetScalaTestClasses(params))
+  }
+
+  def startDebugSession(params: DebugSessionParams): CompletableFuture[URI] = {
+    register(
+      server
+        .startDebugSession(params)
+        .thenApply(address => URI.create(address.getUri))
+    )
   }
 
   private val cancelled = new AtomicBoolean(false)
@@ -94,24 +130,34 @@ object BuildServerConnection {
     val server = launcher.getRemoteProxy
     val result = BuildServerConnection.initialize(workspace, server)
     val stopListening =
-      Cancelable(() => listening.cancel(true))
+      Cancelable(() => listening.cancel(false))
     BuildServerConnection(
       workspace,
       localClient,
       server,
       stopListening :: onShutdown,
       result,
-      name
+      name,
+      result.getVersion()
     )
   }
+
+  final case class BloopExtraBuildParams(
+      semanticdbVersion: String,
+      supportedScalaVersions: java.util.List[String]
+  )
 
   /** Run build/initialize handshake */
   private def initialize(
       workspace: AbsolutePath,
       server: MetalsBuildServer
   ): InitializeBuildResult = {
-    val initializeResult = server.buildInitialize(
-      new InitializeBuildParams(
+    val extraParams = BloopExtraBuildParams(
+      BuildInfo.scalametaVersion,
+      BuildInfo.supportedScalaVersions.asJava
+    )
+    val initializeResult = server.buildInitialize {
+      val params = new InitializeBuildParams(
         "Metals",
         BuildInfo.metalsVersion,
         BuildInfo.bspVersion,
@@ -120,7 +166,11 @@ object BuildServerConnection {
           Collections.singletonList("scala")
         )
       )
-    )
+      val gson = new Gson
+      val data = gson.toJsonTree(extraParams)
+      params.setData(data)
+      params
+    }
     // Block on the `build/initialize` request because it should respond instantly
     // and we want to fail fast if the connection is not
     val result =

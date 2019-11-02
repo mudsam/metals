@@ -10,11 +10,10 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.RegistrationParams
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.UnregistrationParams
+import scala.meta.internal.tvp._
 
-class DelegatingLanguageClient(
-    var underlying: MetalsLanguageClient,
-    config: MetalsServerConfig
-) extends MetalsLanguageClient {
+class DelegatingLanguageClient(var underlying: MetalsLanguageClient)
+    extends MetalsLanguageClient {
 
   override def shutdown(): Unit = {
     underlying.shutdown()
@@ -36,6 +35,10 @@ class DelegatingLanguageClient(
       params: ApplyWorkspaceEditParams
   ): CompletableFuture[ApplyWorkspaceEditResponse] = {
     underlying.applyEdit(params)
+  }
+
+  override def configure(capabilities: ClientExperimentalCapabilities): Unit = {
+    underlying.configure(capabilities)
   }
 
   override def metalsStatus(params: MetalsStatusParams): Unit = {
@@ -82,6 +85,12 @@ class DelegatingLanguageClient(
       params: MetalsInputBoxParams
   ): CompletableFuture[MetalsInputBoxResult] = {
     underlying.metalsInputBox(params)
+  }
+
+  override def metalsTreeViewDidChange(
+      params: TreeViewDidChangeParams
+  ): Unit = {
+    underlying.metalsTreeViewDidChange(params)
   }
 
 }

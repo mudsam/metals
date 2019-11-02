@@ -13,9 +13,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.security.MessageDigest
+import bloop.config.Config
 import scala.meta.internal.io.FileIO
-import scala.meta.internal.io.PathIO
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.ScalaVersions
 import scala.meta.internal.metals.Time
 import scala.meta.internal.metals.Timer
 import scala.meta.internal.metals.{BuildInfo => V}
@@ -39,7 +40,7 @@ import scala.util.matching.Regex
  * A build is declared in metals.json and looks like this: {{{
  *   {
  *     "id": {
- *       "scalaVersion": "2.12.7",
+ *       "scalaVersion": "2.12.10",
  *       "libraryDependencies": [
  *         "org.scalatest::scalatest:3.0.5",
  *       ],
@@ -61,7 +62,8 @@ case class QuickBuild(
     libraryDependencies: Array[String],
     compilerPlugins: Array[String],
     scalacOptions: Array[String],
-    dependsOn: Array[String]
+    dependsOn: Array[String],
+    additionalSources: Array[String]
 ) {
   def withId(id: String): QuickBuild =
     QuickBuild(
@@ -71,7 +73,8 @@ case class QuickBuild(
       orEmpty(libraryDependencies),
       orEmpty(compilerPlugins),
       orEmpty(scalacOptions),
-      orEmpty(dependsOn)
+      orEmpty(dependsOn),
+      orEmpty(additionalSources)
     )
   private def orEmpty(array: Array[String]): Array[String] =
     if (array == null) new Array(0) else array
@@ -88,18 +91,18 @@ case class QuickBuild(
         .resolve(s"scala-$binaryVersion")
         .resolve(s"${testPrefix}classes")
     }
-    val sources = List(
+    val extraSources =
+      additionalSources.map(relpath => workspace.resolve(relpath).toNIO).toList
+    val sources = extraSources ::: List(
       "src/main/java",
       "src/main/scala",
       s"src/main/scala-$binaryVersion",
       s"src/main/scala-$binaryVersion"
     ).map(relpath => baseDirectory.resolve(relpath))
-    val allDependencies =
-      if (libraryDependencies.isEmpty) {
-        Array(s"org.scala-lang:scala-library:$scalaVersion")
-      } else {
-        libraryDependencies
-      }
+    val allDependencies = Array(
+      s"org.scala-lang:scala-library:$scalaVersion",
+      s"org.scala-lang:scala-reflect:$scalaVersion"
+    ) ++ libraryDependencies
     val allJars = classDirectory :: QuickBuild.fetch(
       allDependencies,
       scalaVersion,
@@ -108,7 +111,10 @@ case class QuickBuild(
     )
     val (dependencySources, classpath) =
       allJars.partition(_.getFileName.toString.endsWith("-sources.jar"))
-    val allPlugins = s"org.scalameta:::semanticdb-scalac:${V.semanticdbVersion}" :: compilerPlugins.toList
+    val allPlugins =
+      if (ScalaVersions.isSupportedScalaVersion(scalaVersion))
+        s"org.scalameta:::semanticdb-scalac:${V.semanticdbVersion}" :: compilerPlugins.toList
+      else compilerPlugins.toList
     val pluginDependencies = allPlugins.map(
       plugin =>
         QuickBuild
@@ -151,9 +157,21 @@ case class QuickBuild(
       )
     }
     val javaHome = Option(System.getProperty("java.home")).map(Paths.get(_))
+
+    val testFrameworks = {
+      val frameworks = libraryDependencies
+        .map(lib => lib.take(lib.lastIndexOf(":")))
+        .flatMap(QuickBuild.supportedTestFrameworks.get)
+        .toList
+
+      if (frameworks.isEmpty) None
+      else Some(Config.Test(frameworks, Config.TestOptions.empty))
+    }
+
     C.Project(
       id,
       baseDirectory,
+      Some(workspace.toNIO),
       sources,
       dependsOn.toList,
       classpath,
@@ -188,7 +206,7 @@ case class QuickBuild(
       ),
       java = Some(C.Java(Nil)),
       sbt = None,
-      test = None,
+      test = testFrameworks,
       platform = Some(C.Platform.Jvm(C.JvmConfig(javaHome, Nil), None)),
       resolution = Some(C.Resolution(resolution)),
       resources = None
@@ -197,6 +215,10 @@ case class QuickBuild(
 }
 
 object QuickBuild {
+  val supportedTestFrameworks = Map(
+    "org.scalatest::scalatest" -> Config.TestFramework.ScalaTest,
+    "com.lihaoyi::utest" -> Config.TestFramework(List("utest.runner.Framework"))
+  )
 
   /**
    * Bump up this version in case the JSON generation algorithm changes
@@ -269,11 +291,9 @@ object QuickBuild {
       update(workspace.resolve("metals.json"))
       val bloopDirectory = workspace.resolve(".bloop").toNIO
       Files.createDirectories(bloopDirectory)
-      Files.list(bloopDirectory).forEach { path =>
-        if (PathIO.extension(path) == "json") {
-          update(AbsolutePath(path))
-        }
-      }
+      AbsolutePath(bloopDirectory).list
+        .filter(_.extension == "json")
+        .foreach(json => update(json))
       MD5.bytesToHex(digest.digest())
     }
     if (oldDigest == newDigest) None
@@ -285,8 +305,6 @@ object QuickBuild {
     if (json.isFile) {
       newDigest(workspace) match {
         case None =>
-          // do nothing
-          scribe.info("quick-build is cached")
         case Some((digestFile, digest)) =>
           val timer = new Timer(Time.system)
           val gson = new Gson()
@@ -299,11 +317,9 @@ object QuickBuild {
           }
           val bloopDirectory = workspace.resolve(".bloop").toNIO
           Files.createDirectories(bloopDirectory)
-          Files.list(bloopDirectory).forEach { path =>
-            if (PathIO.extension(path) == "json") {
-              Files.delete(path)
-            }
-          }
+          AbsolutePath(bloopDirectory).list
+            .filter(_.extension == "json")
+            .foreach(json => json.delete())
           val bloopProjects = projects.map(_.toBloop(workspace))
           val byName = bloopProjects.map(p => p.name -> p).toMap
           val fullClasspathProjects = bloopProjects.map { p =>

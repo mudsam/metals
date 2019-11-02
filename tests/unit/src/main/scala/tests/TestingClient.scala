@@ -4,6 +4,9 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+
+import org.eclipse.lsp4j.ApplyWorkspaceEditParams
+import org.eclipse.lsp4j.ApplyWorkspaceEditResponse
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DidChangeWatchedFilesRegistrationOptions
 import org.eclipse.lsp4j.ExecuteCommandParams
@@ -13,6 +16,7 @@ import org.eclipse.lsp4j.MessageType
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.RegistrationParams
 import org.eclipse.lsp4j.ShowMessageRequestParams
+import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.jsonrpc.CompletableFutures
 import scala.collection.concurrent.TrieMap
 import scala.meta.internal.metals.Buffers
@@ -20,13 +24,20 @@ import scala.meta.internal.metals.Messages._
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.MetalsInputBoxParams
 import scala.meta.internal.metals.MetalsInputBoxResult
-import scala.meta.internal.metals.MetalsLanguageClient
 import scala.meta.internal.metals.MetalsSlowTaskParams
 import scala.meta.internal.metals.MetalsSlowTaskResult
 import scala.meta.internal.metals.MetalsStatusParams
 import scala.meta.io.AbsolutePath
 import tests.MetalsTestEnrichments._
 import tests.TestOrderings._
+import scala.meta.inputs.Input
+import scala.meta.internal.builds.GradleBuildTool
+import scala.meta.internal.builds.SbtBuildTool
+import scala.meta.internal.builds.MavenBuildTool
+import scala.meta.internal.builds.MillBuildTool
+import scala.meta.internal.metals.ClientCommands
+import scala.meta.internal.metals.NoopLanguageClient
+import scala.meta.internal.tvp.TreeViewDidChangeParams
 
 /**
  * Fake LSP client that responds to notifications/requests initiated by the server.
@@ -35,13 +46,14 @@ import tests.TestOrderings._
  * - Aggregates published diagnostics and pretty-prints them as strings
  */
 final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
-    extends MetalsLanguageClient {
+    extends NoopLanguageClient {
   val diagnostics = TrieMap.empty[AbsolutePath, Seq[Diagnostic]]
   val diagnosticsCount = TrieMap.empty[AbsolutePath, AtomicInteger]
   val messageRequests = new ConcurrentLinkedDeque[String]()
   val showMessages = new ConcurrentLinkedQueue[MessageParams]()
   val statusParams = new ConcurrentLinkedQueue[MetalsStatusParams]()
   val logMessages = new ConcurrentLinkedQueue[MessageParams]()
+  val treeViewChanges = new ConcurrentLinkedQueue[TreeViewDidChangeParams]()
   val clientCommands = new ConcurrentLinkedDeque[ExecuteCommandParams]()
   var slowTaskHandler: MetalsSlowTaskParams => Option[MetalsSlowTaskResult] = {
     _: MetalsSlowTaskParams =>
@@ -53,13 +65,43 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
       None
   }
 
+  private var refreshedOnIndex = false
+  var refreshModelHandler: () => Unit = () => {}
+
   override def metalsExecuteClientCommand(
       params: ExecuteCommandParams
   ): Unit = {
     clientCommands.addLast(params)
+    params.getCommand match {
+      case ClientCommands.RefreshModel.id =>
+        if (refreshedOnIndex) {
+          refreshModelHandler()
+        } else {
+          refreshedOnIndex = true
+        }
+      case _ =>
+    }
   }
-  def workspaceClientCommands: String = {
-    clientCommands.asScala.map(_.getCommand).mkString("\n")
+
+  override def applyEdit(
+      params: ApplyWorkspaceEditParams
+  ): CompletableFuture[ApplyWorkspaceEditResponse] = {
+    def applyEdits(uri: String, textEdits: java.util.List[TextEdit]): Unit = {
+      val path = AbsolutePath(uri)
+
+      val content = path.readText
+      val editedContent =
+        TextEdits.applyEdits(content, textEdits.asScala.toList)
+
+      path.writeText(editedContent)
+    }
+
+    params.getEdit.getChanges.forEach(applyEdits)
+    CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(true))
+  }
+
+  def workspaceClientCommands: List[String] = {
+    clientCommands.asScala.toList.map(_.getCommand)
   }
   def statusBarHistory: String = {
     statusParams.asScala
@@ -99,11 +141,16 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
     pathDiagnostics(toPath(filename))
   }
   def pathDiagnostics(path: AbsolutePath): String = {
+    val isDeleted = !path.isFile
     val diags = diagnostics.getOrElse(path, Nil).sortBy(_.getRange)
     val relpath =
       path.toRelative(workspace).toURI(isDirectory = false).toString
     val input =
-      path.toInputFromBuffers(buffers).copy(path = relpath)
+      if (isDeleted) {
+        Input.VirtualFile(relpath + " (deleted)", "\n <deleted>" * 1000)
+      } else {
+        path.toInputFromBuffers(buffers).copy(path = relpath)
+      }
     val sb = new StringBuilder
     diags.foreach { diag =>
       val message = diag.formatMessage(input)
@@ -158,16 +205,25 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
   }
   override def showMessageRequest(
       params: ShowMessageRequestParams
-  ): CompletableFuture[MessageActionItem] =
+  ): CompletableFuture[MessageActionItem] = {
+    def isSameMessage(
+        createParams: String => ShowMessageRequestParams
+    ): Boolean = {
+      Set(
+        GradleBuildTool(),
+        SbtBuildTool(""),
+        MavenBuildTool(),
+        MillBuildTool()
+      ).map(tool => createParams(tool.toString()))
+        .contains(params)
+    }
     CompletableFuture.completedFuture {
       messageRequests.addLast(params.getMessage)
       showMessageRequestHandler(params).getOrElse {
-        if (params == ImportBuildChanges.params) {
+        if (isSameMessage(ImportBuildChanges.params)) {
           ImportBuildChanges.yes
-        } else if (params == ImportBuild.params) {
+        } else if (isSameMessage(ImportBuild.params)) {
           ImportBuild.yes
-        } else if (params == Only212Navigation.params("2.11.12")) {
-          Only212Navigation.dismissForever
         } else if (CheckDoctor.isDoctor(params)) {
           CheckDoctor.moreInformation
         } else if (SelectBspServer.isSelectBspServer(params)) {
@@ -179,6 +235,7 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
         }
       }
     }
+  }
   override def logMessage(params: MessageParams): Unit = {
     logMessages.add(params)
   }
@@ -205,4 +262,22 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
   ): CompletableFuture[MetalsInputBoxResult] = {
     CompletableFuture.completedFuture(MetalsInputBoxResult(cancelled = true))
   }
+
+  override def metalsTreeViewDidChange(
+      params: TreeViewDidChangeParams
+  ): Unit = {
+    treeViewChanges.add(params)
+  }
+
+  def workspaceTreeViewChanges: String = {
+    treeViewChanges.asScala.toSeq
+      .map { change =>
+        change.nodes
+          .map(n => n.viewId + " " + Option(n.nodeUri).getOrElse("<root>"))
+          .mkString("\n")
+      }
+      .sorted
+      .mkString("----\n")
+  }
+
 }

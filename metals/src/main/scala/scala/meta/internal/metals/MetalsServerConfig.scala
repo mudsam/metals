@@ -1,6 +1,8 @@
 package scala.meta.internal.metals
 
 import scala.meta.internal.metals.Configs._
+import scala.meta.internal.pc.PresentationCompilerConfigImpl
+import scala.meta.pc.PresentationCompilerConfig.OverrideDefFormat
 
 /**
  * Configuration parameters for the Metals language server.
@@ -20,7 +22,6 @@ import scala.meta.internal.metals.Configs._
  * @param icons what icon set to use for messages.
  */
 final case class MetalsServerConfig(
-    bloopProtocol: BloopProtocol = BloopProtocol.default,
     globSyntax: GlobSyntaxConfig = GlobSyntaxConfig.default,
     statusBar: StatusBarConfig = StatusBarConfig.default,
     slowTask: SlowTaskConfig = SlowTaskConfig.default,
@@ -57,12 +58,22 @@ final case class MetalsServerConfig(
       "metals.warnings",
       default = true
     ),
+    bloopEmbeddedVersion: String = System.getProperty(
+      "bloop.embedded.version",
+      BuildInfo.bloopVersion
+    ),
+    bloopSbtVersion: String = System.getProperty(
+      "bloop.sbt.version",
+      BuildInfo.sbtBloopVersion
+    ),
+    bloopGenerateSbt: Boolean =
+      "false" != System.getProperty("bloop.generate.sbt"),
     icons: Icons = Icons.default,
-    statistics: StatisticsConfig = StatisticsConfig.default
+    statistics: StatisticsConfig = StatisticsConfig.default,
+    compilers: PresentationCompilerConfigImpl = CompilersConfig()
 ) {
   override def toString: String =
     List[String](
-      s"bloop-protocol=$bloopProtocol",
       s"glob-syntax=$globSyntax",
       s"status-bar=$statusBar",
       s"slow-task=$slowTask",
@@ -70,6 +81,7 @@ final case class MetalsServerConfig(
       s"show-message=$showMessage",
       s"show-message-request=$showMessageRequest",
       s"no-initialized=$isNoInitialized",
+      s"compilers=$compilers",
       s"http=$isHttpEnabled",
       s"input-box=$isInputBoxEnabled",
       s"icons=$icons",
@@ -78,7 +90,7 @@ final case class MetalsServerConfig(
 }
 object MetalsServerConfig {
   def isTesting: Boolean = "true" == System.getProperty("metals.testing")
-  private def binaryOption(key: String, default: Boolean): Boolean =
+  def binaryOption(key: String, default: Boolean): Boolean =
     System.getProperty(key) match {
       case "true" | "on" => true
       case "false" | "off" => false
@@ -94,7 +106,12 @@ object MetalsServerConfig {
           slowTask = SlowTaskConfig.on,
           icons = Icons.vscode,
           executeClientCommand = ExecuteClientCommandConfig.on,
-          globSyntax = GlobSyntaxConfig.vscode
+          globSyntax = GlobSyntaxConfig.vscode,
+          compilers = base.compilers.copy(
+            _parameterHintsCommand = Some("editor.action.triggerParameterHints"),
+            _completionCommand = Some("editor.action.triggerSuggest"),
+            overrideDefFormat = OverrideDefFormat.Unicode
+          )
         )
       case "vim-lsc" =>
         base.copy(
@@ -104,6 +121,17 @@ object MetalsServerConfig {
           isHttpEnabled = true,
           icons = Icons.unicode
         )
+      case "coc.nvim" =>
+        base.copy(
+          statusBar = StatusBarConfig.showMessage,
+          isHttpEnabled = true,
+          compilers = base.compilers.copy(
+            _parameterHintsCommand = Some("editor.action.triggerParameterHints"),
+            _completionCommand = Some("editor.action.triggerSuggest"),
+            overrideDefFormat = OverrideDefFormat.Unicode,
+            isCompletionItemResolve = false
+          )
+        )
       case "sublime" =>
         base.copy(
           isHttpEnabled = true,
@@ -112,11 +140,15 @@ object MetalsServerConfig {
           showMessage = ShowMessageConfig.logMessage,
           showMessageRequest = ShowMessageRequestConfig.on,
           icons = Icons.unicode,
-          isExitOnShutdown = true
+          isExitOnShutdown = true,
+          compilers = base.compilers.copy(
+            // Avoid showing the method signature twice because it's already visible in the label.
+            isCompletionItemDetailEnabled = false
+          )
         )
       case "emacs" =>
         base.copy(
-          isHttpEnabled = true
+          executeClientCommand = ExecuteClientCommandConfig.on
         )
       case _ =>
         base

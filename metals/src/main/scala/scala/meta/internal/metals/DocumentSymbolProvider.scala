@@ -82,7 +82,9 @@ class DocumentSymbolProvider(trees: Trees) {
     override def apply(tree: Tree): Unit = {
       def continue(withNewOwner: Boolean = false): Unit = {
         val oldRoot = owner
-        if (withNewOwner) owner = owner.getChildren.asScala.last
+        val children = owner.getChildren.asScala
+        val hasChildren = children.nonEmpty
+        if (withNewOwner && hasChildren) owner = children.last
         super.apply(tree)
         owner = oldRoot
       }
@@ -93,8 +95,45 @@ class DocumentSymbolProvider(trees: Trees) {
         case t: Pkg =>
           addChild(t.ref.syntax, SymbolKind.Package, t.pos, t.ref.pos, "")
           newOwner()
+        case t: Term.NewAnonymous =>
+          val (name, selection) = t.templ.inits match {
+            case Nil => ("(anonymous)", t.pos)
+            case inits =>
+              (inits.map(_.tpe.syntax).mkString(" with "), inits.head.pos)
+          }
+          if (t.templ.stats.nonEmpty) {
+            addChild(s"new $name", SymbolKind.Interface, t.pos, selection, "")
+            newOwner()
+          } else continue()
         case _: Source | _: Template =>
           continue()
+        case block: Term.Block =>
+          if (owner.getName() == "try") {
+            if (owner.getChildren().isEmpty()) {
+              continue()
+            } else {
+              val blockPos = block.stats.head.pos
+              addChild("finally", SymbolKind.Struct, block.pos, block.pos, "")
+              newOwner()
+            }
+          } else {
+            continue()
+          }
+        case t: Case =>
+          if (owner.getName() == "try" && owner
+              .getChildren()
+              .asScala
+              .forall(_.getName() != "catch"))
+            addChild("catch", SymbolKind.Struct, t.pos, t.pos, "")
+        case t: Term
+            if t.isInstanceOf[Term.Try] || t
+              .isInstanceOf[Term.TryWithHandler] =>
+          if (t.children.nonEmpty) {
+            addChild("try", SymbolKind.Struct, t.pos, t.pos, "")
+            newOwner()
+          } else {
+            continue()
+          }
         case t: Defn.Class =>
           addChild(
             t.name.value,
@@ -139,6 +178,7 @@ class DocumentSymbolProvider(trees: Trees) {
             t.name.pos,
             t.decltpe.fold("")(_.syntax)
           )
+          newOwner()
         case t: Decl.Def =>
           addChild(
             t.name.value,
@@ -147,6 +187,7 @@ class DocumentSymbolProvider(trees: Trees) {
             t.name.pos,
             t.decltpe.syntax
           )
+          newOwner()
         case t: Defn.Val =>
           addPats(
             t.pats,
@@ -154,6 +195,7 @@ class DocumentSymbolProvider(trees: Trees) {
             t.pos,
             t.decltpe.fold("")(_.syntax)
           )
+          newOwner()
         case t: Decl.Val =>
           addPats(
             t.pats,
@@ -161,6 +203,7 @@ class DocumentSymbolProvider(trees: Trees) {
             t.pos,
             t.decltpe.syntax
           )
+          newOwner()
         case t: Defn.Var =>
           addPats(
             t.pats,
@@ -168,6 +211,7 @@ class DocumentSymbolProvider(trees: Trees) {
             t.pos,
             t.decltpe.fold("")(_.syntax)
           )
+          newOwner()
         case t: Decl.Var =>
           addPats(
             t.pats,
@@ -175,10 +219,11 @@ class DocumentSymbolProvider(trees: Trees) {
             t.pos,
             t.decltpe.syntax
           )
+          newOwner()
         case t: Defn.Type =>
           addChild(
             t.name.value,
-            SymbolKind.Field,
+            SymbolKind.TypeParameter,
             t.pos,
             t.name.pos,
             t.body.syntax
@@ -186,7 +231,7 @@ class DocumentSymbolProvider(trees: Trees) {
         case t: Decl.Type =>
           addChild(
             t.name.value,
-            SymbolKind.Field,
+            SymbolKind.TypeParameter,
             t.pos,
             t.name.pos,
             ""

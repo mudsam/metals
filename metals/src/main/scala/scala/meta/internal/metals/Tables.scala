@@ -5,18 +5,19 @@ import java.sql.Connection
 import java.sql.DriverManager
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
+import scala.meta.internal.builds.Digests
 import scala.meta.io.AbsolutePath
 import scala.util.control.NonFatal
+import scala.meta.internal.pc.InterruptException
 
 final class Tables(
-
-     workspace: AbsolutePath,
+    workspace: AbsolutePath,
     time: Time,
     config: MetalsServerConfig
 ) extends Cancelable {
   val jarSymbols = new JarTopLevels(() => connection)
-  val sbtDigests =
-    new SbtDigests(() => connection, time)
+  val digests =
+    new Digests(() => connection, time)
   val dependencySources =
     new DependencySources(() => connection)
   val dismissedNotifications =
@@ -46,10 +47,14 @@ final class Tables(
     try persistentConnection(isAutoServer = true)
     catch {
       case NonFatal(e) =>
-        scribe.error(
-          s"unable to setup persistent H2 database with AUTO_SERVER=true, falling back to AUTO_SERVER=false.",
-          e
-        )
+        val message =
+          s"unable to setup persistent H2 database with AUTO_SERVER=true, falling back to AUTO_SERVER=false."
+        e match {
+          case InterruptException() =>
+            scribe.info(message)
+          case _ =>
+            scribe.error(e)
+        }
         tryNoAutoServer()
     }
   }
@@ -85,6 +90,10 @@ final class Tables(
       else ""
     val dbfile = workspace.resolve(".metals").resolve("metals")
     Files.createDirectories(dbfile.toNIO.getParent)
+    System.setProperty(
+      "h2.bindAddress",
+      System.getProperty("h2.bindAddress", "127.0.0.1")
+    )
     val url = s"jdbc:h2:file:$dbfile;MV_STORE=false$autoServer"
     tryUrl(url)
   }

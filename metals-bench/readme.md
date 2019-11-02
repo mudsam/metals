@@ -24,13 +24,13 @@ Date: 2018 October 8th, commit 59bda2ac81a497fa168677499bd1a9df60fec5ab
 ## workspace/symbol
 
 ```
-[info] Benchmark                   (query)  Mode  Cnt    Score    Error  Units
-[info] ClasspathFuzzBench.run  InputStream    ss   60   46.368 ±  3.053  ms/op
-[info] ClasspathFuzzBench.run          Str    ss   60   65.793 ±  5.230  ms/op
-[info] ClasspathFuzzBench.run         Like    ss   60   17.341 ±  0.211  ms/op
-[info] ClasspathFuzzBench.run          M.E    ss   60  150.852 ± 15.329  ms/op
-[info] ClasspathFuzzBench.run         File    ss   60   70.818 ±  4.629  ms/op
-[info] ClasspathFuzzBench.run        Files    ss   60   49.294 ±  3.296  ms/op
+[info] Benchmark                   (query)  Mode  Cnt    Score   Error  Units
+[info] ClasspathFuzzBench.run  InputStream    ss   50   51.825 ± 4.510  ms/op
+[info] ClasspathFuzzBench.run          Str    ss   50   75.340 ± 8.054  ms/op
+[info] ClasspathFuzzBench.run         Like    ss   50   18.955 ± 2.129  ms/op
+[info] ClasspathFuzzBench.run          M.E    ss   50  108.284 ± 8.370  ms/op
+[info] ClasspathFuzzBench.run         File    ss   50   77.288 ± 4.674  ms/op
+[info] ClasspathFuzzBench.run        Files    ss   50   47.241 ± 4.018  ms/op
 
 [info] Benchmark                                          (query)  Mode  Cnt    Score   Error  Units
 [info] WorkspaceFuzzBench.upper                               FSM    ss   30  215.994 ± 2.248  ms/op
@@ -43,6 +43,51 @@ Date: 2018 October 8th, commit 59bda2ac81a497fa168677499bd1a9df60fec5ab
 [info] WorkspaceFuzzBench.upper                        fsmbuilder    ss   30  295.822 ± 7.603  ms/op
 [info] WorkspaceFuzzBench.upper                fsmfunctionbuilder    ss   30  164.104 ± 2.003  ms/op
 [info] WorkspaceFuzzBench.upper  abcdefghijklmnopqrstabcdefghijkl    ss   30  202.464 ± 1.423  ms/op
+```
+
+## textDocument/completions
+
+First results show that loading a global instance of every request is too expensive.
+
+```
+[info] Benchmark                                        (completion)  Mode  Cnt   Score    Error  Units
+[info] CachedSearchAndCompilerCompletionBench.complete     scopeOpen    ss   60  31.864 ± 16.848  ms/op
+[info] CachedSearchAndCompilerCompletionBench.complete     scopeDeep    ss   60  68.081 ±  7.143  ms/op
+[info] CachedSearchAndCompilerCompletionBench.complete    memberDeep    ss   60  45.872 ± 33.381  ms/op
+```
+
+The high error margins are caused by individual outliers
+
+```
+[info] Result "bench.CachedSearchAndCompilerCompletionBench.complete":
+[info]   N = 60
+[info]   mean =     45.872 ±(99.9%) 33.381 ms/op
+[info]   Histogram, ms/op:
+[info]     [  0.000,  50.000) = 59
+[info]     [ 50.000, 100.000) = 0
+[info]     [100.000, 150.000) = 0
+[info]     [150.000, 200.000) = 0
+[info]     [200.000, 250.000) = 0
+[info]     [250.000, 300.000) = 0
+[info]     [300.000, 350.000) = 0
+[info]     [350.000, 400.000) = 0
+[info]     [400.000, 450.000) = 0
+[info]     [450.000, 500.000) = 0
+[info]     [500.000, 550.000) = 0
+[info]     [550.000, 600.000) = 0
+[info]     [600.000, 650.000) = 1
+[info]   Percentiles, ms/op:
+[info]       p(0.0000) =     24.897 ms/op
+[info]      p(50.0000) =     36.936 ms/op
+[info]      p(90.0000) =     42.652 ms/op
+[info]      p(95.0000) =     45.902 ms/op
+[info]      p(99.0000) =    613.205 ms/op
+[info]      p(99.9000) =    613.205 ms/op
+[info]      p(99.9900) =    613.205 ms/op
+[info]      p(99.9990) =    613.205 ms/op
+[info]      p(99.9999) =    613.205 ms/op
+[info]     p(100.0000) =    613.205 ms/op
+[info] # Run complete. Total time: 00:00:47
 ```
 
 ## Flamegraphs
@@ -89,3 +134,12 @@ If all went well you should see an output like this in the end.
 ```
 
 Open the `*.svg` files in your browser to see the graphs.
+
+## Classpath indexing
+
+```
+> bench/jmh:run -i 10 -wi 10 -f1 -t1 .*ClasspathIndexingBench
+[info] Benchmark                   Mode  Cnt    Score    Error  Units
+[info] ClasspathIndexingBench.run    ss   10  919.237  ± 42.827  ms/op # JDK 8
+[info] ClasspathIndexingBench.run    ss   10  1316.451 ± 22.595  ms/op # JDK 11
+```

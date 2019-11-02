@@ -7,7 +7,6 @@ import scala.annotation.tailrec
 import scala.meta.Token
 import scala.meta._
 import scala.meta.internal.metals.MetalsEnrichments._
-import scala.meta.internal.mtags.MtagsEnrichments._
 
 /** Helper to map between position between two similar strings. */
 final class TokenEditDistance private (
@@ -253,7 +252,7 @@ object TokenEditDistance {
       }
     }
     val deltas = {
-      import scala.collection.JavaConverters._
+      import scala.meta.internal.jdk.CollectionConverters._
       DiffUtils
         .diff(original.asJava, revised.asJava, TokenEqualizer)
         .getDeltas

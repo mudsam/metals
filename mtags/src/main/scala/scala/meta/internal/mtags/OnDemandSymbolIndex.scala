@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import scala.collection.concurrent.TrieMap
 import scala.meta.inputs.Input
 import scala.meta.internal.io.PathIO
+import scala.meta.internal.io.{ListFiles => _}
 import scala.meta.internal.io._
 import scala.meta.internal.mtags.MtagsEnrichments._
 import scala.meta.internal.semanticdb.Scala._
@@ -53,15 +54,13 @@ final case class OnDemandSymbolIndex(
   override def addSourceJar(jar: AbsolutePath): Unit = tryRun {
     if (sourceJars.addEntry(jar)) {
       FileIO.withJarFileSystem(jar, create = false) { root =>
-        ListFiles.foreach(root) { source =>
-          if (source.toLanguage.isScala) {
-            try {
-              addSourceFile(source, None)
-            } catch {
-              case NonFatal(e) =>
-                onError(IndexError(source, e))
+        root.listRecursive.foreach {
+          case source if source.isScala =>
+            try addSourceFile(source, None)
+            catch {
+              case NonFatal(e) => onError.lift(IndexError(source, e))
             }
-          }
+          case _ =>
         }
       }
     }
@@ -213,7 +212,8 @@ final case class OnDemandSymbolIndex(
     val noExtension = toplevel.value.stripSuffix(".").stripSuffix("#")
     List(
       noExtension + ".scala",
-      noExtension + ".java"
+      noExtension + ".java",
+      "java.base/" + noExtension + ".java" // For Java 11.
     )
   }
 

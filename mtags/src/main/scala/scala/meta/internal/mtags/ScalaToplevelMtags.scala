@@ -38,7 +38,7 @@ class ScalaToplevelMtags(
     val input: Input.VirtualFile,
     includeInnerClasses: Boolean
 ) extends MtagsIndexer {
-  private val scanner = new LegacyScanner(input, dialects.Scala212)
+  private val scanner = new LegacyScanner(input, dialects.Scala213)
   scanner.reader.nextChar()
   def isDone: Boolean = scanner.curr.token == EOF
   def isNewline: Boolean =
@@ -81,6 +81,9 @@ class ScalaToplevelMtags(
 
   def emitPackage(): Unit = {
     require(scanner.curr.token == PACKAGE, "package")
+    if (currentOwner eq Symbols.EmptyPackage) {
+      currentOwner = Symbols.RootPackage
+    }
     val old = currentOwner
     acceptTrivia()
     scanner.curr.token match {

@@ -26,6 +26,14 @@ You will need the following applications installed:
 - `tests/slow` slow integration tests.
 - `test-workspace` demo project for manually testing Metals through an editor.
 
+## Git hooks
+
+This git repository has a pre-push hook to run Scalafmt.
+
+The CI also uses Scalafix to assert that there a no unused imports, to
+automatically remove unused imports run `sbt scalafixAll`. We don't run
+Scalafix as a pre-push git hook since starting sbt takes a long time.
+
 ## Related projects
 
 The improvement you are looking to contribute may belong in a separate
@@ -48,8 +56,6 @@ To run the unit tests open an sbt shell and run `unit/test`
 
 ```sh
 sbt
-# Run once in the beginning and run again for every change in the sbt plugin.
-> sbt-metals/publishLocal
 # (recommended) run specific test suite, great for edit/test/debug workflows.
 > metals/testOnly -- tests.DefinitionSuite
 # run unit tests, modestly fast but still a bit too slow for edit/test/debug workflows.
@@ -59,6 +65,21 @@ sbt
 # (not recommended) run all tests, slow. It's better to target individual projects.
 > test
 ```
+
+### Manually testing a `LspSuite`
+
+Every test suite that extends `LspSuite` generates a workspace directory under
+`tests/unit/target/e2e/$suitename/$testname`. To debug why a `LspSuite` might
+be failing, run the test once and then open it directly in your editor. For
+example, for the test case `"deprecated-scala"` in `WarningsLspSuite` run the
+following command:
+
+```
+code tests/unit/target/e2e/warnings/deprecated-scala
+```
+
+If you are using VS Code, make sure to update the "Server Version" setting to
+use your locally published version of Metals.
 
 ## Manual tests
 

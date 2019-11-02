@@ -3,7 +3,7 @@ jdk:
 os:
   - linux
 language: scala
-
+dist: trusty
 stages:
   - name: test
   - name: release
@@ -12,18 +12,11 @@ stages:
 jobs:
   include:
     # default stage is test
-    - env: TEST="scalafmt+scalafix+docs"
-      script:
-        - ./bin/scalafmt --test
-        - sbt scalafixCheck docs/docusaurusCreateSite
-    - env: TEST="sbt unit/test"
-      script:
-        - sbt sbt-metals/publishLocal unit/test docs/run
-    - env: TEST="sbt slow/test"
-      script:
-        - sbt sbt-metals/publishLocal slow/test
     - stage: release
-      script: sbt ci-release docs/docusaurusPublishGhpages
+      script:
+        - nvm install 'lts/*' && nvm use 'lts/*'
+        - git fetch --tags
+        - sbt ci-release docs/docusaurusPublishGhpages
 
 cache:
   directories:
@@ -42,4 +35,3 @@ before_cache:
   - find $HOME/.sbt -name "*.lock" -type f -delete
   - find $HOME/.ivy2/cache -name "ivydata-*.properties" -type f -delete
   - rm -rf $HOME/.ivy2/local
-

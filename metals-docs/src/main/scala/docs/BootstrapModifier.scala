@@ -24,8 +24,6 @@ class BootstrapModifier extends StringModifier {
            |curl -L -o coursier https://git.io/coursier
            |chmod +x coursier
            |./coursier bootstrap \\
-           |  --java-opt -XX:+UseG1GC \\
-           |  --java-opt -XX:+UseStringDeduplication  \\
            |  --java-opt -Xss4m \\
            |  --java-opt -Xms100m \\
            |  --java-opt -Dmetals.client=$client \\
@@ -35,6 +33,9 @@ class BootstrapModifier extends StringModifier {
            |  -o /usr/local/bin/$binary -f
            |```
            |Make sure the generated `$binary` binary is available on your `$$PATH`.
+           |
+           |Configure the system properties `-Dhttps.proxyHost=… -Dhttps.proxyPort=…`
+           |if you are behind an HTTP proxy.
            |""".stripMargin
       case _ =>
         reporter.error(s"Invalid info '$info'. Expected '<binary> <client>'")

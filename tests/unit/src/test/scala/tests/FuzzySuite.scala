@@ -24,7 +24,12 @@ object FuzzySuite extends BaseSuite {
     }
   }
 
+  checkOK("scala.concurrent.package", "scala/concurrent/package.class")
+  checkOK("scala.concurrent", "scala/concurrent/package.class")
+
   checkOK("::", "scala/collection/immutable/`::`#")
+  checkOK("IO", "scala/IO#")
+  checkOK("IS", "scala/InputOutputStream#")
   checkNO("Mon", "ModuleKindJS")
   checkNO("Min", "MavenPluginIntegration")
   checkOK("DoSymPro", "DocumentSymbolProvider")
@@ -56,8 +61,8 @@ object FuzzySuite extends BaseSuite {
         .sorted
       val isPrefix = Fuzzy.bloomFilterSymbolStrings(Seq(in))
       assertNoDiff(obtained.mkString("\n"), expected)
-      val allWords = Fuzzy.bloomFilterQueryStrings(in)
-      val isNotPrefix = allWords.filterNot(isPrefix)
+      val allWords = Fuzzy.bloomFilterQueryStrings(in).map(_.toString)
+      val isNotPrefix = allWords.filterNot(word => isPrefix.mightContain(word))
       assert(isNotPrefix.isEmpty)
     }
   }
@@ -123,4 +128,17 @@ object FuzzySuite extends BaseSuite {
        |""".stripMargin
   )
 
+  test("estimatedSize") {
+    // All uppercase inputs are most adversarial because we index all trigram
+    // uppercase combinations.
+    val alphabet = 'A'.to('Z').map(_.toChar).mkString
+    val bloom = Fuzzy.bloomFilterSymbolStrings(List(alphabet))
+    // Assert that the expected false positive ratio remains
+    // reasonable despite pathological input.
+    assert(bloom.bloom.expectedFpp() < 0.02)
+  }
+
+  test("shortClassName") {
+    assert(!Fuzzy.isExactMatch("AA", "A.class"))
+  }
 }

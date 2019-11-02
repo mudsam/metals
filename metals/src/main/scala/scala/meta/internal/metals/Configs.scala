@@ -1,9 +1,12 @@
 package scala.meta.internal.metals
 
+import java.util.Properties
 import org.eclipse.lsp4j.DidChangeWatchedFilesRegistrationOptions
 import org.eclipse.lsp4j.FileSystemWatcher
+import scala.meta.internal.jdk.CollectionConverters._
+import scala.meta.internal.pc.PresentationCompilerConfigImpl
 import scala.meta.io.AbsolutePath
-import scala.collection.JavaConverters._
+import scala.meta.pc.PresentationCompilerConfig.OverrideDefFormat
 
 object Configs {
 
@@ -20,7 +23,12 @@ object Configs {
       new DidChangeWatchedFilesRegistrationOptions(
         List(
           new FileSystemWatcher(s"$root/*.sbt"),
+          new FileSystemWatcher(s"$root/pom.xml"),
+          new FileSystemWatcher(s"$root/*.sc"),
+          new FileSystemWatcher(s"$root/*?.gradle"),
+          new FileSystemWatcher(s"$root/*.gradle.kts"),
           new FileSystemWatcher(s"$root/project/*.{scala,sbt}"),
+          new FileSystemWatcher(s"$root/project/project/*.{scala,sbt}"),
           new FileSystemWatcher(s"$root/project/build.properties")
         ).asJava
       )
@@ -33,6 +41,47 @@ object Configs {
     def default = new GlobSyntaxConfig(
       System.getProperty("metals.glob-syntax", uri.value)
     )
+  }
+
+  object CompilersConfig {
+    def apply(
+        props: Properties = System.getProperties
+    ): PresentationCompilerConfigImpl = {
+      PresentationCompilerConfigImpl(
+        debug =
+          MetalsServerConfig.binaryOption("metals.pc.debug", default = false),
+        _parameterHintsCommand =
+          Option(props.getProperty("metals.signature-help.command")),
+        _completionCommand =
+          Option(props.getProperty("metals.completion.command")),
+        overrideDefFormat =
+          Option(props.getProperty("metals.override-def-format")) match {
+            case Some("unicode") => OverrideDefFormat.Unicode
+            case Some("ascii") => OverrideDefFormat.Ascii
+            case _ => OverrideDefFormat.Ascii
+          },
+        isCompletionItemDetailEnabled = MetalsServerConfig.binaryOption(
+          "metals.completion-item.detail",
+          default = true
+        ),
+        isCompletionItemDocumentationEnabled = MetalsServerConfig.binaryOption(
+          "metals.completion-item.documentation",
+          default = true
+        ),
+        isHoverDocumentationEnabled = MetalsServerConfig.binaryOption(
+          "metals.hover.documentation",
+          default = true
+        ),
+        isSignatureHelpDocumentationEnabled = MetalsServerConfig.binaryOption(
+          "metals.signature-help.documentation",
+          default = true
+        ),
+        isCompletionItemResolve = MetalsServerConfig.binaryOption(
+          "metals.completion-item.resolve",
+          default = true
+        )
+      )
+    }
   }
 
 }

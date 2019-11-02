@@ -3,10 +3,19 @@
   "localized-strings": {
     "next": "Next",
     "previous": "Previous",
-    "tagline": "Work-in-progress language server for Scala",
+    "tagline": "Scala language server with rich IDE features",
     "docs": {
       "build-tools/bloop": {
         "title": "Bloop"
+      },
+      "build-tools/gradle": {
+        "title": "Gradle"
+      },
+      "build-tools/maven": {
+        "title": "Maven"
+      },
+      "build-tools/mill": {
+        "title": "Mill"
       },
       "build-tools/new-build-tool": {
         "title": "Integrating a new build tool"
@@ -24,11 +33,17 @@
       "contributors/project-goals": {
         "title": "Project Goals"
       },
+      "contributors/releasing": {
+        "title": "Making a release"
+      },
       "contributors/updating-website": {
         "title": "Contributing to the website"
       },
       "editors/atom": {
         "title": "Atom"
+      },
+      "editors/eclipse": {
+        "title": "Eclipse"
       },
       "editors/emacs": {
         "title": "Emacs"
@@ -42,6 +57,9 @@
       },
       "editors/sublime": {
         "title": "Sublime Text"
+      },
+      "editors/tree-view-protocol": {
+        "title": "Tree View Protocol"
       },
       "editors/vim": {
         "title": "Vim"

@@ -10,4 +10,8 @@ object Directories {
     RelativePath(".metals").resolve("metals.log")
   def semanticdb: RelativePath =
     RelativePath("META-INF").resolve("semanticdb")
+  def pc: RelativePath =
+    RelativePath(".metals").resolve("pc.log")
+  def workspaceSymbol: RelativePath =
+    RelativePath(".metals").resolve("workspace-symbol.md")
 }

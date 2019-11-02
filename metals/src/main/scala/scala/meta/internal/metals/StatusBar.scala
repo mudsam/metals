@@ -6,8 +6,14 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Future
+import scala.concurrent.Promise
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.util.control.NonFatal
+import org.eclipse.lsp4j.MessageParams
+import org.eclipse.lsp4j.MessageType
+import scala.util.Failure
+import scala.util.Success
+import scala.concurrent.ExecutionContext
 
 /**
  * Manages sending metals/status notifications to the editor client.
@@ -25,8 +31,63 @@ import scala.util.control.NonFatal
 final class StatusBar(
     client: () => MetalsLanguageClient,
     time: Time,
-    progressTicks: ProgressTicks = ProgressTicks.braille
-) extends Cancelable {
+    progressTicks: ProgressTicks = ProgressTicks.braille,
+    val icons: Icons,
+    statusBar: StatusBarConfig
+)(implicit ec: ExecutionContext)
+    extends Cancelable {
+
+  def trackBlockingTask[T](message: String)(thunk: => T): T = {
+    val promise = Promise[Unit]()
+    trackFuture(message, promise.future)
+    try {
+      thunk
+    } finally {
+      promise.trySuccess(())
+    }
+  }
+
+  def trackSlowTask[T](message: String)(thunk: => T): T = {
+    if (statusBar.isOff) trackBlockingTask(message)(thunk)
+    else {
+      val task = client().metalsSlowTask(MetalsSlowTaskParams(message))
+      val future = task.asScala
+      try {
+        thunk
+      } catch {
+        case NonFatal(e) =>
+          slowTaskFailed(message, e)
+          throw e
+      } finally {
+        task.cancel(true)
+      }
+    }
+  }
+
+  def trackSlowFuture[T](message: String, thunk: Future[T]): Unit = {
+    if (statusBar.isOff) trackFuture(message, thunk)
+    else {
+      val task = client().metalsSlowTask(MetalsSlowTaskParams(message))
+      val future = task.asScala
+      thunk.onComplete {
+        case Failure(exception) =>
+          slowTaskFailed(message, exception)
+          task.cancel(true)
+        case Success(value) =>
+          task.cancel(true)
+      }
+    }
+  }
+
+  private def slowTaskFailed(message: String, e: Throwable): Unit = {
+    scribe.error(s"failed: $message", e)
+    client().logMessage(
+      new MessageParams(
+        MessageType.Error,
+        s"$message failed, see metals.log for more details."
+      )
+    )
+  }
 
   def trackFuture[T](
       message: String,
@@ -169,7 +230,7 @@ final class StatusBar(
 
   override def cancel(): Unit = {
     if (scheduledFuture != null) {
-      scheduledFuture.cancel(true)
+      scheduledFuture.cancel(false)
     }
   }
 }

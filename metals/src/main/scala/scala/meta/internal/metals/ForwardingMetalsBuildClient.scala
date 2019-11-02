@@ -1,33 +1,35 @@
 package scala.meta.internal.metals
 
-import ch.epfl.scala.bsp4j.BuildTargetIdentifier
-import ch.epfl.scala.bsp4j.CompileReport
-import ch.epfl.scala.bsp4j.TaskDataKind
-import ch.epfl.scala.bsp4j.TaskFinishParams
-import ch.epfl.scala.bsp4j.TaskProgressParams
-import ch.epfl.scala.bsp4j.TaskStartParams
-import ch.epfl.scala.{bsp4j => b}
-import com.google.gson.JsonObject
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+
+import ch.epfl.scala.bsp4j._
+import ch.epfl.scala.{bsp4j => b}
+import com.google.gson.JsonObject
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
-import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.{lsp4j => l}
+
 import scala.collection.concurrent.TrieMap
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Promise
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.tvp._
 
 /**
  * A build client that forwards notifications from the build server to the language client.
  */
 final class ForwardingMetalsBuildClient(
-    languageClient: LanguageClient,
+    languageClient: MetalsLanguageClient,
     diagnostics: Diagnostics,
     buildTargets: BuildTargets,
+    buildTargetClasses: BuildTargetClasses,
     config: MetalsServerConfig,
     statusBar: StatusBar,
-    time: Time
-) extends MetalsBuildClient
+    time: Time,
+    didCompile: CompileReport => Unit,
+    treeViewProvider: () => TreeViewProvider
+)(implicit ec: ExecutionContext)
+    extends MetalsBuildClient
     with Cancelable {
 
   private case class Compilation(
@@ -35,18 +37,27 @@ final class ForwardingMetalsBuildClient(
       promise: Promise[CompileReport],
       isNoOp: Boolean,
       progress: TaskProgress = TaskProgress.empty
-  )
+  ) extends TreeViewCompilation {
+    def progressPercentage = progress.percentage
+  }
 
   private val compilations = TrieMap.empty[BuildTargetIdentifier, Compilation]
   private val hasReportedError = Collections.newSetFromMap(
     new ConcurrentHashMap[BuildTargetIdentifier, java.lang.Boolean]()
   )
 
+  val updatedTreeViews = ConcurrentHashSet.empty[BuildTargetIdentifier]
+
   def reset(): Unit = {
     cancel()
+    updatedTreeViews.clear()
   }
+
   override def cancel(): Unit = {
-    compilations.values.foreach { compilation =>
+    for {
+      key <- compilations.keysIterator
+      compilation <- compilations.remove(key)
+    } {
       compilation.promise.cancel()
     }
   }
@@ -85,18 +96,19 @@ final class ForwardingMetalsBuildClient(
         }
         for {
           task <- params.asCompileTask
-          info <- buildTargets.info(task.getTarget)
+          target = task.getTarget
+          info <- buildTargets.info(target)
         } {
-          diagnostics.onStartCompileBuildTarget(task.getTarget)
+          diagnostics.onStartCompileBuildTarget(target)
           // cancel ongoing compilation for the current target, if any.
-          compilations.get(task.getTarget).foreach(_.promise.cancel())
+          compilations.remove(target).foreach(_.promise.cancel())
 
           val name = info.getDisplayName
           val promise = Promise[CompileReport]()
           val isNoOp = params.getMessage.startsWith("Start no-op compilation")
           val compilation = Compilation(new Timer(time), promise, isNoOp)
-
           compilations(task.getTarget) = compilation
+
           statusBar.trackFuture(
             s"Compiling $name",
             promise.future,
@@ -114,9 +126,10 @@ final class ForwardingMetalsBuildClient(
       case TaskDataKind.COMPILE_REPORT =>
         for {
           report <- params.asCompileReport
-          compilation <- compilations.get(report.getTarget)
+          compilation <- compilations.remove(report.getTarget)
         } {
           diagnostics.onFinishCompileBuildTarget(report.getTarget)
+          didCompile(report)
           val target = report.getTarget
           compilation.promise.trySuccess(report)
           val name = buildTargets.info(report.getTarget) match {
@@ -133,6 +146,15 @@ final class ForwardingMetalsBuildClient(
             if (hasReportedError.contains(target)) {
               // Only report success compilation if it fixes a previous compile error.
               statusBar.addMessage(message)
+            }
+            if (!compilation.isNoOp || !updatedTreeViews.contains(target)) {
+              // By default, skip `onBuildTargetDidCompile` notifications on no-op
+              // compilations to reduce noisy traffic to the client. However, we
+              // send the notification if it's the first successful compilation of
+              // that target to fix
+              // https://github.com/scalameta/metals/issues/846.
+              updatedTreeViews.add(target)
+              treeViewProvider().onBuildTargetDidCompile(target)
             }
             hasReportedError.remove(target)
           } else {
@@ -171,5 +193,12 @@ final class ForwardingMetalsBuildClient(
         }
       case _ =>
     }
+  }
+
+  def ongoingCompilations(): TreeViewCompilations = new TreeViewCompilations {
+    override def get(id: BuildTargetIdentifier) = compilations.get(id)
+    override def isEmpty = compilations.isEmpty
+    override def size = compilations.size
+    override def buildTargets = compilations.keysIterator
   }
 }

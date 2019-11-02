@@ -113,6 +113,8 @@ Possible values:
 - `on`: the `metals/status` notification is supported.
 - `log-message`: translate `metals/status` notifications to `window/logMessage`
   notifications. Used by vim-lsc at the moment.
+- `show-message`: translate `metals/status` notifications to
+  `window/showMessage` notifications. Used by coc.nvim at the moment.
 
 ### `-Dmetals.slow-task`
 
@@ -137,7 +139,7 @@ Possible values:
 
 - `off` (default): the `metals/executeClientCommand` notification is not
   supported. Client commands can still be handled by enabling
-  `-Dmetals.http=true`.
+  `-Dmetals.http=on`.
 - `on`: the `metals/executeClientCommand` notification is supported and all
   [Metals client commands](#metals-client-commands) are handled.
 
@@ -238,6 +240,50 @@ Possible values:
 
 ```
 
+### `-Dmetals.signature-help.command`
+
+An optional string value for a command identifier to trigger parameter hints
+(`textDocument/signatureHelp`) in the editor. Metals uses this setting to
+populate `CompletionItem.command` for completion items that move the cursor
+inside an argument list. For example, when completing `"".stripSu@@` into
+`"".stripSuffix(@@)`, Metals will automatically trigger parameter hints if this
+setting is provided by the editor.
+
+Default value:
+
+- `"editor.action.triggerParameterHints"`: when editor client is Visual Studio
+  Code or coc.nvim.
+- empty: for all other editors.
+
+### `-Dmetals.completion.command`
+
+An optional string value for a command identifier to trigger completion
+(`textDocument/signatureHelp`) in the editor.
+
+Default value:
+
+- `"editor.action.triggerSuggest"`: when editor client is Visual Studio Code or
+  coc.nvim.
+- empty: for all other editors.
+
+### `-Dmetals.pc.debug`
+
+Possible values:
+
+- `off` (default): do not log verbose debugging information for the presentation
+  compiler.
+- `on`: log verbose debugging information for the presentation compiler.
+
+### `-Dbloop.embedded.version`
+
+Version number of the embedded Bloop server. Default value is
+`-Dbloop.embedded.version=@BLOOP_VERSION@`.
+
+### `-Dbloop.sbt.version`
+
+Version number of the sbt-bloop plugin to use for the "Install build" command.
+Default value is `-Dbloop.sbt.version=@SBT_BLOOP_VERSION@`.
+
 ## Metals user configuration
 
 Users can customize the Metals server through the LSP
@@ -295,6 +341,11 @@ them to improve the user experience.
 
 To enable Metals extensions, start the main process with the system property
 `-Dmetals.extensions=true`.
+
+### Tree View Protocol
+
+Metals implements several custom JSON-RPC endpoints related to rendering tree
+views in the editor client, the [Tree View Protocol](tree-view-protocol.md).
 
 ### `metals/slowTask`
 
@@ -455,6 +506,25 @@ export interface MetalsInputBoxParams {
 export interface MetalsInputBoxResult {
   value?: string;
   cancelled?: boolean;
+}
+```
+
+### `metals/windowStateDidChange`
+
+The `metals/windowStateDidChange` notification is sent from the client to the
+server to indicate whether the editor application window is focused or not. When
+the editor window is not focused, Metals tries to avoid triggering expensive
+computation in the background such as compilation.
+
+_Notification_:
+
+- method: `metals/windowStateDidChange`
+- params: `WindowStateDidChangeParams` defined as follows:
+
+```ts
+interface WindowStateDidChangeParams( {
+  /** If true, the editor application window is focused. False, otherwise. */
+  focused: boolean;
 }
 ```
 

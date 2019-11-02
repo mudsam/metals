@@ -6,7 +6,7 @@ const baseUrl = "/metals/";
 
 const siteConfig = {
   title: "Metals",
-  tagline: "Work-in-progress language server for Scala",
+  tagline: "Scala language server with rich IDE features",
   url: "http://scalameta.org",
   baseUrl: baseUrl,
 
@@ -18,6 +18,8 @@ const siteConfig = {
     apiKey: "c865f6d974a3072a35d4b53d48ac2307",
     indexName: "metals"
   },
+
+  gaTrackingId: "UA-140140828-1",
 
   // For no header links in the top nav bar -> headerLinks: [],
   headerLinks: [
@@ -43,6 +45,8 @@ const siteConfig = {
   customDocsPath: "website/target/docs",
 
   stylesheets: [baseUrl + "css/custom.css"],
+
+  blogSidebarCount: "ALL",
 
   // This copyright info is used in /core/Footer.js and blog rss/atom feeds.
   copyright: `Copyright © ${new Date().getFullYear()} Metals`,
